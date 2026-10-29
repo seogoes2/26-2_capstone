@@ -8,6 +8,7 @@ import '../widgets/home/bottom_nav.dart';
 import 'alerts.dart';
 import 'wifi.dart';
 import 'home.dart';
+import 'report.dart';
 import 'settings.dart';
 
 class MainShell extends StatefulWidget {
@@ -45,7 +46,7 @@ class _MainShellState extends State<MainShell> {
               children: [
                 HomeScreen(storage: widget.storage),
                 ConnectionScreen(connection: widget.connection),
-                const _ComingSoon(title: '리포트'),
+                ReportScreen(romLimit: widget.storage.settings.romLimit),
                 AlertsScreen(center: widget.alerts),
                 SettingsScreen(
                   storage: widget.storage,
@@ -61,30 +62,6 @@ class _MainShellState extends State<MainShell> {
               FocusScope.of(context).unfocus();
               setState(() => _tab = tab);
             },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ComingSoon extends StatelessWidget {
-  const _ComingSoon({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 78, 24, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: pretendard(27, FontWeight.w700, AppColors.text)),
-          const SizedBox(height: 5),
-          Text(
-            '준비 중인 화면이에요',
-            style: pretendard(13, FontWeight.w400, AppColors.textSub),
           ),
         ],
       ),

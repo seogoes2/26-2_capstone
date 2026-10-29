@@ -7,6 +7,8 @@ class TodayMetrics {
     required this.wearGoal,
     required this.overflexCount,
     this.overflexChangeFromYesterday,
+    this.maxOverAngle,
+    this.hourlyOverflex = const [],
   });
 
   final int? jointAngle;
@@ -21,6 +23,12 @@ class TodayMetrics {
 
   final int? overflexChangeFromYesterday;
 
+  final int? maxOverAngle;
+
+  final List<int> hourlyOverflex;
+
+  static const hourlyLabels = ['06', '09', '12', '15', '18', '21'];
+
   bool get isWithinRom =>
       jointAngle != null && jointAngle! >= romMin && jointAngle! <= romMax;
 
@@ -34,5 +42,7 @@ class TodayMetrics {
     wearGoal: Duration(hours: 4),
     overflexCount: 7,
     overflexChangeFromYesterday: -2,
+    maxOverAngle: 8,
+    hourlyOverflex: [0, 1, 0, 4, 1, 1],
   );
 }
