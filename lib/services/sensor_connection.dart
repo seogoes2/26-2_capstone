@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+
+import 'api_client.dart';
+import 'server_api.dart';
 
 @immutable
 class SensorStatus {
@@ -23,21 +24,6 @@ class SensorStatus {
   final int? todayRecords;
 
   final Duration responseTime;
-
-  factory SensorStatus.fromJson(
-    Map<String, Object?> json,
-    Duration responseTime,
-  ) {
-    int? asInt(Object? v) => v is num ? v.round() : null;
-    final name = json['name'];
-    return SensorStatus(
-      name: name is String && name.isNotEmpty ? name : 'GUPSIN_SENSOR',
-      batteryPercent: asInt(json['battery']),
-      rssi: asInt(json['rssi']),
-      todayRecords: asInt(json['todayRecords']),
-      responseTime: responseTime,
-    );
-  }
 
   String get signalLabel {
     final r = rssi;
@@ -67,25 +53,22 @@ abstract class SensorLink {
   Future<bool> sendSettings(Map<String, Object?> settings);
 }
 
-class HttpSensorLink implements SensorLink {
-  HttpSensorLink({
-    this.baseUrl = defaultBaseUrl,
-    this.timeout = const Duration(seconds: 3),
+/// Reads the sensor's state through the backend: the sensor reports to the
+/// server over Wi-Fi, and the app asks the server.
+class ServerSensorLink implements SensorLink {
+  ServerSensorLink(
+    this._api, {
     Connectivity? connectivity,
-    http.Client? client,
+    DateTime Function()? now,
   }) : _connectivity = connectivity ?? Connectivity(),
-       _client = client ?? http.Client();
+       _now = now ?? DateTime.now;
 
-  static const defaultBaseUrl = String.fromEnvironment(
-    'DEVICE_BASE_URL',
-    defaultValue: 'http://192.168.4.1',
-  );
-
-  final String baseUrl;
-  final Duration timeout;
+  final ApiClient _api;
   final Connectivity _connectivity;
-  final http.Client _client;
+  final DateTime Function() _now;
 
+  // The demo server runs on a laptop in the same Wi-Fi, so the phone needs
+  // Wi-Fi (not just mobile data) to reach it.
   static bool _hasWifi(List<ConnectivityResult> results) =>
       results.contains(ConnectivityResult.wifi) ||
       results.contains(ConnectivityResult.ethernet);
@@ -101,12 +84,13 @@ class HttpSensorLink implements SensorLink {
   Future<SensorStatus?> fetchStatus() async {
     final watch = Stopwatch()..start();
     try {
-      final res = await _client
-          .get(Uri.parse('$baseUrl/status'))
-          .timeout(timeout);
-      if (res.statusCode != 200) return null;
-      return SensorStatus.fromJson(_decodeMap(res.bodyBytes), watch.elapsed);
-    } on Exception {
+      final json = await _api.get(ServerApi.deviceStatus);
+      return ServerApi.sensorStatus(
+        json,
+        responseTime: watch.elapsed,
+        now: _now(),
+      );
+    } on ApiException {
       return null;
     }
   }
@@ -114,25 +98,10 @@ class HttpSensorLink implements SensorLink {
   @override
   Future<bool> sendSettings(Map<String, Object?> settings) async {
     try {
-      final res = await _client
-          .post(
-            Uri.parse('$baseUrl/settings'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(settings),
-          )
-          .timeout(timeout);
-      return res.statusCode == 200;
-    } on Exception {
+      await _api.put(ServerApi.deviceSettings, ServerApi.settings(settings));
+      return true;
+    } on ApiException {
       return false;
-    }
-  }
-
-  static Map<String, Object?> _decodeMap(List<int> bytes) {
-    try {
-      final decoded = jsonDecode(utf8.decode(bytes));
-      return decoded is Map<String, Object?> ? decoded : const {};
-    } on FormatException {
-      return const {};
     }
   }
 }
@@ -195,10 +164,10 @@ class SensorConnection extends ChangeNotifier {
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
-  factory SensorConnection.fromEnvironment() {
+  factory SensorConnection.fromEnvironment(ApiClient api) {
     const mode = String.fromEnvironment('SENSOR_MODE');
     return SensorConnection(
-      mode == 'mock' ? const MockSensorLink() : HttpSensorLink(),
+      mode == 'mock' ? const MockSensorLink() : ServerSensorLink(api),
     );
   }
 
