@@ -8,10 +8,13 @@ import 'package:gupsin/main.dart';
 import 'package:gupsin/models/alert.dart';
 import 'package:gupsin/models/hand.dart';
 import 'package:gupsin/models/journal_entry.dart';
+import 'package:gupsin/models/today_metrics.dart';
+import 'package:gupsin/models/weekly.dart';
 import 'package:gupsin/screens/finger.dart';
 import 'package:gupsin/screens/hands.dart';
 import 'package:gupsin/screens/home.dart';
 import 'package:gupsin/screens/main.dart';
+import 'package:gupsin/screens/report.dart';
 import 'package:gupsin/screens/settings.dart';
 import 'package:gupsin/screens/alerts.dart';
 import 'package:gupsin/screens/start.dart';
@@ -20,6 +23,7 @@ import 'package:gupsin/services/app_storage.dart';
 import 'package:gupsin/services/sensor_connection.dart';
 import 'package:gupsin/widgets/app_button.dart';
 import 'package:gupsin/widgets/app_toast.dart';
+import 'package:gupsin/widgets/chart.dart';
 import 'package:gupsin/widgets/finger_number_button.dart';
 import 'package:gupsin/widgets/home/journal_cards.dart';
 
@@ -582,6 +586,110 @@ void main() {
         find.byType(Navigator).first,
       );
       expect(navigator.canPop(), isFalse);
+    });
+  });
+
+  group('리포트', () {
+    Future<void> openReportTab(WidgetTester tester) async {
+      await storage.markOnboardingDone();
+      await openApp(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('리포트').last);
+      await tester.pumpAndSettle();
+    }
+
+    Finder inReport(String text) => find.descendant(
+      of: find.byType(ReportScreen),
+      matching: find.text(text),
+    );
+
+    testWidgets('하루 리포트: 오늘 착용·과굴곡·최대 초과·목표 달성과 시간대별 그래프', (tester) async {
+      await openReportTab(tester);
+
+      expect(inReport('사용 리포트'), findsOneWidget);
+      expect(inReport('2시간 36분'), findsOneWidget);
+      expect(inReport('7회'), findsOneWidget);
+      expect(inReport('+8°'), findsOneWidget);
+      expect(inReport('65%'), findsOneWidget);
+      expect(find.byType(HourlyBarChart), findsOneWidget);
+      for (final label in ['06', '09', '12', '15', '18', '21']) {
+        expect(inReport(label), findsOneWidget);
+      }
+      expect(inReport('최대 8°를 초과한 움직임이 있었어요'), findsOneWidget);
+      expect(inReport('오후 3시 과굴곡 4회 · 허용 ROM 45° 기준'), findsOneWidget);
+    });
+
+    testWidgets('주간 리포트: 이번 주 합계·그래프·변화 분석', (tester) async {
+      await openReportTab(tester);
+
+      await tester.tap(inReport('주간'));
+      await tester.pumpAndSettle();
+
+      expect(inReport('이번 주 착용 시간'), findsOneWidget);
+      expect(inReport('22시간 24분'), findsOneWidget);
+      expect(inReport('31회'), findsOneWidget);
+      expect(inReport('+16°'), findsOneWidget);
+      expect(inReport('80%'), findsOneWidget);
+      expect(find.byType(WeeklyLineChart), findsOneWidget);
+      for (final d in ['월', '화', '수', '목', '금', '토', '일']) {
+        expect(inReport(d), findsOneWidget);
+      }
+      expect(inReport('하루 평균 3시간 12분 착용했어요'), findsOneWidget);
+      expect(inReport('지난주 평균 2시간 48분보다 24분 증가했어요.'), findsOneWidget);
+      expect(inReport('과굴곡 횟수는 8회 줄었어요'), findsOneWidget);
+      expect(inReport('지난주 39회 → 이번 주 31회'), findsOneWidget);
+    });
+
+    testWidgets('주간 그래프의 요일을 누르면 그날 착용 시간이 말풍선으로 보인다', (tester) async {
+      await openReportTab(tester);
+      await tester.tap(inReport('주간'));
+      await tester.pumpAndSettle();
+
+      final chart = find.byType(WeeklyLineChart);
+      final box = tester.getRect(chart);
+      await tester.tapAt(Offset(box.left + 186, box.top + 100));
+      await tester.pump();
+      expect(
+        find.descendant(of: chart, matching: find.text('3시간 36분')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('월간은 아직 준비 중', (tester) async {
+      await openReportTab(tester);
+      await tester.tap(inReport('월간'));
+      await tester.pumpAndSettle();
+      expect(inReport('월간 리포트는 준비 중이에요.'), findsOneWidget);
+    });
+
+    testWidgets('과굴곡이 없는 날은 분석 대신 빈 문구', (tester) async {
+      usePhoneSize(tester);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: ReportScreen(
+            metrics: TodayMetrics(
+              jointAngle: 30,
+              wearTime: Duration(hours: 1),
+              wearGoal: Duration(hours: 4),
+              overflexCount: 0,
+              hourlyOverflex: [0, 0, 0, 0, 0, 0],
+            ),
+          ),
+        ),
+      );
+      expect(find.text('최근 사용 기록이 없어요.'), findsOneWidget);
+    });
+
+    test('주간 날짜 범위', () {
+      expect(
+        WeeklyMetrics.sample.totalWear,
+        const Duration(hours: 22, minutes: 24),
+      );
+      expect(
+        WeeklyMetrics.sample.averageWear,
+        const Duration(hours: 3, minutes: 12),
+      );
+      expect(WeeklyMetrics.sample.goalPercent, 80);
     });
   });
 }
