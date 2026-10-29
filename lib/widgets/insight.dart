@@ -26,7 +26,8 @@ class InsightCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: height,
+      width: double.infinity,
+      constraints: BoxConstraints(minHeight: height),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
@@ -45,22 +46,26 @@ class InsightCard extends StatelessWidget {
               ),
             ),
           ),
-          Positioned(
-            left: 51,
-            right: 17,
-            top: titleTop,
-            child: Text(
-              title,
-              style: pretendard(13, FontWeight.w600, AppColors.text),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              51,
+              titleTop,
+              17,
+              height - 42 - 12 * 1.45,
             ),
-          ),
-          Positioned(
-            left: 51,
-            right: 17,
-            top: 42,
-            child: Text(
-              body,
-              style: pretendard(12, FontWeight.w400, AppColors.textSub),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: pretendard(13, FontWeight.w600, AppColors.text),
+                ),
+                SizedBox(height: 42 - titleTop - 13 * 1.45),
+                Text(
+                  body,
+                  style: pretendard(12, FontWeight.w400, AppColors.textSub),
+                ),
+              ],
             ),
           ),
         ],

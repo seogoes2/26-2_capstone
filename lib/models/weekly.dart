@@ -1,3 +1,5 @@
+import 'today_metrics.dart';
+
 class WeeklyMetrics {
   const WeeklyMetrics({
     required this.dailyWear,
@@ -17,6 +19,10 @@ class WeeklyMetrics {
   final Duration? lastWeekAverageWear;
   final int? lastWeekOverflex;
 
+  bool get hasRecords =>
+      dailyWear.any((duration) => duration > Duration.zero) ||
+      overflexCount > 0;
+
   Duration get totalWear => dailyWear.fold(Duration.zero, (sum, d) => sum + d);
 
   Duration get averageWear => dailyWear.isEmpty
@@ -28,20 +34,10 @@ class WeeklyMetrics {
     return goal == 0 ? 0 : (totalWear.inMinutes * 100 / goal).round();
   }
 
-  static const sample = WeeklyMetrics(
-    dailyWear: [
-      Duration(hours: 2, minutes: 36),
-      Duration(hours: 3, minutes: 12),
-      Duration(hours: 3, minutes: 9),
-      Duration(hours: 3, minutes: 36),
-      Duration(hours: 2, minutes: 52),
-      Duration(hours: 3, minutes: 50),
-      Duration(hours: 3, minutes: 9),
-    ],
-    overflexCount: 31,
-    wearGoalPerDay: Duration(hours: 4),
-    maxOverAngle: 16,
-    lastWeekAverageWear: Duration(hours: 2, minutes: 48),
-    lastWeekOverflex: 39,
+  /// Nothing recorded yet. Shown until real data arrives.
+  static const empty = WeeklyMetrics(
+    dailyWear: [],
+    overflexCount: 0,
+    wearGoalPerDay: defaultWearGoal,
   );
 }

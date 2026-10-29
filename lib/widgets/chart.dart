@@ -166,7 +166,22 @@ class WeeklyLineChart extends StatefulWidget {
 }
 
 class _WeeklyLineChartState extends State<WeeklyLineChart> {
-  late int? _selected = widget.initialSelected;
+  late int? _selected = _validSelection(widget.initialSelected);
+
+  int? _validSelection(int? index) {
+    if (index == null || widget.values.isEmpty) return null;
+    return index.clamp(0, widget.values.length - 1);
+  }
+
+  @override
+  void didUpdateWidget(covariant WeeklyLineChart oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _selected = _validSelection(
+      oldWidget.initialSelected != widget.initialSelected
+          ? widget.initialSelected
+          : _selected,
+    );
+  }
 
   static const double _base = 153;
   static const double _top = 51;
@@ -200,7 +215,11 @@ class _WeeklyLineChartState extends State<WeeklyLineChart> {
         builder: (context, constraints) {
           final width = constraints.maxWidth;
           final n = widget.values.length;
-          final step = n > 1 ? (width - _rightGap - _firstX) / (n - 1) : 0.0;
+          // Keep Monday–Sunday in the same slots, including a partial week.
+          final slots = n > widget.labels.length ? n : widget.labels.length;
+          final step = slots > 1
+              ? (width - _rightGap - _firstX) / (slots - 1)
+              : 0.0;
           final points = [
             for (var i = 0; i < n; i++)
               Offset(
@@ -210,8 +229,13 @@ class _WeeklyLineChartState extends State<WeeklyLineChart> {
               ),
           ];
 
-          int nearest(double dx) =>
-              ((dx - _firstX) / step).round().clamp(0, n - 1);
+          void selectAt(double dx) {
+            if (n == 0) return;
+            final index = n == 1 || step <= 0
+                ? 0
+                : ((dx - _firstX) / step).round().clamp(0, n - 1);
+            if (_selected != index) setState(() => _selected = index);
+          }
 
           Widget grid(double y, String label) => Positioned(
             left: 0,
@@ -238,8 +262,10 @@ class _WeeklyLineChartState extends State<WeeklyLineChart> {
           final selected = _selected;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapDown: (d) =>
-                setState(() => _selected = nearest(d.localPosition.dx)),
+            onTapDown: n == 0 ? null : (d) => selectAt(d.localPosition.dx),
+            onHorizontalDragUpdate: n == 0
+                ? null
+                : (d) => selectAt(d.localPosition.dx),
             child: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -249,15 +275,44 @@ class _WeeklyLineChartState extends State<WeeklyLineChart> {
                 Positioned.fill(
                   child: CustomPaint(painter: _LinePainter(points)),
                 ),
-                for (var i = 0; i < n; i++)
+                for (var i = 0; i < slots; i++)
                   Positioned(
-                    left: points[i].dx - 15,
-                    width: 30,
-                    top: 171,
-                    child: Text(
-                      i < widget.labels.length ? widget.labels[i] : '',
-                      textAlign: TextAlign.center,
-                      style: axisStyle,
+                    left: _firstX + step * i - 20,
+                    width: 40,
+                    top: 157,
+                    height: 44,
+                    child: Semantics(
+                      button: i < n,
+                      selected: i == selected,
+                      label: i < widget.labels.length ? widget.labels[i] : '',
+                      value: i < n ? formatDuration(widget.values[i]) : '기록 없음',
+                      excludeSemantics: true,
+                      onTap: i < n ? () => setState(() => _selected = i) : null,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 14),
+                        child: Text(
+                          i < widget.labels.length ? widget.labels[i] : '',
+                          textAlign: TextAlign.center,
+                          style: axisStyle,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (n == 0)
+                  Positioned.fill(
+                    child: Center(
+                      child: Container(
+                        color: Colors.white,
+                        padding: const EdgeInsets.all(8),
+                        child: Text(
+                          '착용 기록이 없어요',
+                          style: pretendard(
+                            12,
+                            FontWeight.w400,
+                            AppColors.textSub,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 if (selected != null && selected < n)
@@ -325,11 +380,7 @@ class _Tooltip extends StatelessWidget {
             child: Center(
               child: Text(
                 text,
-                style: pretendard(
-                  8,
-                  FontWeight.w500,
-                  Colors.white,
-                ).copyWith(height: 1.2),
+                style: pretendard(8, FontWeight.w500, Colors.white),
               ),
             ),
           ),

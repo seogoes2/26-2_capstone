@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/alerts.dart';
 import '../services/app_storage.dart';
+import '../services/metrics_source.dart';
 import '../services/sensor_connection.dart';
 import '../theme/app_colors.dart';
 import '../widgets/home/bottom_nav.dart';
@@ -18,6 +19,7 @@ class MainShell extends StatefulWidget {
     required this.connection,
     required this.alerts,
     required this.onEditProfile,
+    this.metrics = const EmptyMetricsSource(),
     this.initialTab = HomeTab.home,
   });
 
@@ -25,6 +27,7 @@ class MainShell extends StatefulWidget {
   final SensorConnection connection;
   final AlertCenter alerts;
   final VoidCallback onEditProfile;
+  final MetricsSource metrics;
   final HomeTab initialTab;
 
   @override
@@ -44,9 +47,13 @@ class _MainShellState extends State<MainShell> {
             child: IndexedStack(
               index: _tab.index,
               children: [
-                HomeScreen(storage: widget.storage),
+                HomeScreen(storage: widget.storage, source: widget.metrics),
                 ConnectionScreen(connection: widget.connection),
-                ReportScreen(romLimit: widget.storage.settings.romLimit),
+                ReportScreen(
+                  romLimit: widget.storage.settings.romLimit,
+                  storage: widget.storage,
+                  source: widget.metrics,
+                ),
                 AlertsScreen(center: widget.alerts),
                 SettingsScreen(
                   storage: widget.storage,

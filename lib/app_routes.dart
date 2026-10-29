@@ -7,6 +7,7 @@ import 'screens/main.dart';
 import 'screens/start.dart';
 import 'services/alerts.dart';
 import 'services/app_storage.dart';
+import 'services/metrics_source.dart';
 import 'services/sensor_connection.dart';
 
 abstract final class AppRoutes {
@@ -28,8 +29,9 @@ abstract final class AppRoutes {
   static Map<String, WidgetBuilder> routes(
     AppStorage storage,
     SensorConnection connection,
-    AlertCenter alerts,
-  ) => {
+    AlertCenter alerts, {
+    MetricsSource metrics = const EmptyMetricsSource(),
+  }) => {
     start: (context) =>
         StartScreen(onStart: () => Navigator.pushNamed(context, handSelect)),
     handSelect: (context) => HandSelectScreen(
@@ -41,6 +43,7 @@ abstract final class AppRoutes {
       storage: storage,
       connection: connection,
       alerts: alerts,
+      metrics: metrics,
       onEditProfile: () => Navigator.pushNamed(context, editHands),
     ),
     ..._editRoutes(storage),
