@@ -23,6 +23,7 @@ class AppStorage {
   static const _kAlerts = 'alerts';
   static const _kRomLimit = 'rom_limit';
   static const _kVibration = 'vibration_seconds';
+  static const _kApiToken = 'api_access_token';
 
   bool get onboardingDone => _prefs.getBool(_kOnboardingDone) ?? false;
 
@@ -55,6 +56,14 @@ class AppStorage {
 
   Future<void> saveJournal(DateTime day, JournalEntry entry) =>
       _prefs.setString(_journalKey(day), jsonEncode(entry.toJson()));
+
+  /// Bearer token for the backend, once a login or device registration
+  /// call has issued one.
+  String? get apiToken => _prefs.getString(_kApiToken);
+
+  Future<void> saveApiToken(String? token) => token == null
+      ? _prefs.remove(_kApiToken)
+      : _prefs.setString(_kApiToken, token);
 
   bool get wearReminderOn => _prefs.getBool(_kWearReminder) ?? true;
 

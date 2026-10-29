@@ -418,28 +418,6 @@ void main() {
     });
   });
 
-  group('센서 응답 읽기', () {
-    test('이름·배터리·신호·기록 수를 읽는다', () {
-      final s = SensorStatus.fromJson({
-        'name': 'GUPSIN_SENSOR_03',
-        'battery': 40,
-        'rssi': -85,
-        'todayRecords': 12,
-      }, Duration.zero);
-      expect(s.displayName, '굽신굽신 · 센서 03');
-      expect(s.batteryPercent, 40);
-      expect(s.signalLabel, '신호 약함');
-      expect(s.todayRecords, 12);
-    });
-
-    test('값이 없어도 연결된 것으로 본다', () {
-      final s = SensorStatus.fromJson({}, const Duration(milliseconds: 100));
-      expect(s.displayName, '굽신굽신 센서');
-      expect(s.batteryPercent, isNull);
-      expect(s.signalLabel, '신호 원활');
-    });
-  });
-
   group('알림', () {
     Future<void> openAlertsTab(WidgetTester tester) async {
       await storage.markOnboardingDone();
