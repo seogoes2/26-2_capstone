@@ -1,3 +1,6 @@
+/// Daily wear goal used until the user (or server) sets one.
+const defaultWearGoal = Duration(hours: 4);
+
 class TodayMetrics {
   const TodayMetrics({
     required this.jointAngle,
@@ -36,13 +39,11 @@ class TodayMetrics {
       ? 0
       : (wearTime.inMinutes * 100 / wearGoal.inMinutes).round();
 
-  static const sample = TodayMetrics(
-    jointAngle: 60,
-    wearTime: Duration(hours: 2, minutes: 36),
-    wearGoal: Duration(hours: 4),
-    overflexCount: 7,
-    overflexChangeFromYesterday: -2,
-    maxOverAngle: 8,
-    hourlyOverflex: [0, 1, 0, 4, 1, 1],
+  /// Nothing recorded yet. Shown until real data arrives.
+  static const empty = TodayMetrics(
+    jointAngle: null,
+    wearTime: Duration.zero,
+    wearGoal: defaultWearGoal,
+    overflexCount: 0,
   );
 }

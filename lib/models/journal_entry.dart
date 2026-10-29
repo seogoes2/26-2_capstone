@@ -51,6 +51,9 @@ class JournalEntry {
 
   static const empty = JournalEntry();
 
+  bool get isEmpty =>
+      mood == null && symptoms.isEmpty && activities.isEmpty && memo.isEmpty;
+
   Map<String, Object?> toJson() => {
     'mood': mood?.name,
     'symptoms': [for (final s in symptoms) s.name],

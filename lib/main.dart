@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app_routes.dart';
 import 'services/alerts.dart';
 import 'services/app_storage.dart';
+import 'services/metrics_source.dart';
 import 'services/sensor_connection.dart';
 
 Future<void> main() async {
@@ -13,7 +14,16 @@ Future<void> main() async {
   if (const String.fromEnvironment('SENSOR_MODE') == 'mock') {
     await alerts.addSamplesIfEmpty(DateTime.now());
   }
-  runApp(GupsinApp(storage: storage, connection: connection, alerts: alerts));
+  // Replace with a server/sensor-backed source once the API is ready.
+  const metrics = EmptyMetricsSource();
+  runApp(
+    GupsinApp(
+      storage: storage,
+      connection: connection,
+      alerts: alerts,
+      metrics: metrics,
+    ),
+  );
 }
 
 class GupsinApp extends StatelessWidget {
@@ -22,15 +32,22 @@ class GupsinApp extends StatelessWidget {
     required this.storage,
     required this.connection,
     required this.alerts,
+    this.metrics = const EmptyMetricsSource(),
   });
 
   final AppStorage storage;
   final SensorConnection connection;
   final AlertCenter alerts;
+  final MetricsSource metrics;
 
   @override
   Widget build(BuildContext context) {
-    final routes = AppRoutes.routes(storage, connection, alerts);
+    final routes = AppRoutes.routes(
+      storage,
+      connection,
+      alerts,
+      metrics: metrics,
+    );
     return MaterialApp(
       title: '굽신굽신',
       debugShowCheckedModeBanner: false,

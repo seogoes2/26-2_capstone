@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/journal_entry.dart';
 import '../models/today_metrics.dart';
 import '../services/app_storage.dart';
+import '../services/metrics_source.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_button.dart';
 import '../widgets/app_toast.dart';
@@ -13,12 +14,12 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.storage,
-    this.metrics = TodayMetrics.sample,
+    this.source = const EmptyMetricsSource(),
     this.now = DateTime.now,
   });
 
   final AppStorage storage;
-  final TodayMetrics metrics;
+  final MetricsSource source;
 
   final DateTime Function() now;
 
@@ -28,6 +29,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final DateTime _today;
+  TodayMetrics _metrics = TodayMetrics.empty;
   Mood? _mood;
   final Set<Symptom> _symptoms = {};
   final Set<Activity> _activities = {};
@@ -61,6 +63,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _symptoms.addAll(saved.symptoms);
     _activities.addAll(saved.activities);
     _memo.text = saved.memo;
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final metrics = await widget.source.today(_today);
+      if (mounted) setState(() => _metrics = metrics);
+    } catch (e) {
+      debugPrint('오늘 데이터를 불러오지 못했어요: $e');
+    }
   }
 
   @override
@@ -103,147 +115,158 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final m = widget.metrics;
+    final m = _metrics;
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 78, 24, 31),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '오늘의 움직임',
-                style: pretendard(27, FontWeight.w700, AppColors.text),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                '${_dateLabel(_today)} · 내 손가락 사용 습관을 점검해요',
-                style: pretendard(13, FontWeight.w400, AppColors.textSub),
-              ),
-              const SizedBox(height: 25),
-              CurrentAngleCard(metrics: m),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: MetricCard(
-                      icon: 'clock',
-                      label: '오늘 착용',
-                      value: formatDuration(m.wearTime),
-                      caption:
-                          '목표 ${formatDuration(m.wearGoal)}의 ${m.wearGoalPercent}%',
-                      captionColor: AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: MetricCard(
-                      icon: 'hand_small',
-                      label: '오늘 과굴곡',
-                      value: '${m.overflexCount}회',
-                      caption: _overflexCaption(m.overflexChangeFromYesterday),
-                      captionColor: _overflexColor(
-                        m.overflexChangeFromYesterday,
+        child: RefreshIndicator(
+          onRefresh: _load,
+          color: AppColors.primary,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(24, 78, 24, 31),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '오늘의 움직임',
+                  style: pretendard(27, FontWeight.w700, AppColors.text),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  '${_dateLabel(_today)} · 내 손가락 사용 습관을 점검해요',
+                  style: pretendard(13, FontWeight.w400, AppColors.textSub),
+                ),
+                const SizedBox(height: 25),
+                CurrentAngleCard(metrics: m),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: MetricCard(
+                        icon: 'clock',
+                        label: '오늘 착용',
+                        value: formatDuration(m.wearTime),
+                        caption:
+                            '목표 ${formatDuration(m.wearGoal)}의 ${m.wearGoalPercent}%',
+                        captionColor: AppColors.primary,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                '착용 목표',
-                style: pretendard(17, FontWeight.w600, AppColors.text),
-              ),
-              const SizedBox(height: 16),
-              WearGoalCard(goal: m.wearGoal),
-              const SizedBox(height: 51),
-              Padding(
-                padding: const EdgeInsets.only(left: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '오늘의 상태',
-                      style: pretendard(27, FontWeight.w700, AppColors.text),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      '몸의 느낌과 활동을 함께 남겨보세요',
-                      style: pretendard(13, FontWeight.w400, AppColors.textSub),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: MetricCard(
+                        icon: 'hand_small',
+                        label: '오늘 과굴곡',
+                        value: '${m.overflexCount}회',
+                        caption: _overflexCaption(
+                          m.overflexChangeFromYesterday,
+                        ),
+                        captionColor: _overflexColor(
+                          m.overflexChangeFromYesterday,
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 25),
-              JournalCard(
-                title: '오늘 손가락 상태는 어떤가요?',
-                titleGap: 13,
-                childPadding: const EdgeInsets.fromLTRB(18, 0, 18, 11),
-                child: MoodSelector(
-                  selected: _mood,
-                  onChanged: (mood) => setState(() => _mood = mood),
+                const SizedBox(height: 20),
+                Text(
+                  '착용 목표',
+                  style: pretendard(17, FontWeight.w600, AppColors.text),
                 ),
-              ),
-              const SizedBox(height: 20),
-              JournalCard(
-                title: '느낀 증상',
-                childPadding: const EdgeInsets.fromLTRB(25, 0, 18, 9),
-                child: ChipGroup<Symptom>(
-                  options: _symptomOrder,
-                  labelOf: (s) => s.label,
-                  chipWidthOf: (_) => 67,
-                  selected: _symptoms,
-                  onToggle: _toggleSymptom,
-                ),
-              ),
-              const SizedBox(height: 20),
-              JournalCard(
-                title: '주로 한 활동',
-                childPadding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-                child: ChipGroup<Activity>(
-                  options: Activity.values,
-                  labelOf: (a) => a.label,
-                  chipWidthOf: (a) => _activityWidths[a]!,
-                  spacing: 7,
-                  selected: _activities,
-                  onToggle: _toggleActivity,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Stack(
-                children: [
-                  JournalCard(
-                    title: '한 줄 메모',
-                    titleGap: 16,
-                    childPadding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-                    child: NoteField(controller: _memo),
+                const SizedBox(height: 16),
+                WearGoalCard(goal: m.wearGoal),
+                const SizedBox(height: 51),
+                Padding(
+                  padding: const EdgeInsets.only(left: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '오늘의 상태',
+                        style: pretendard(27, FontWeight.w700, AppColors.text),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        '몸의 느낌과 활동을 함께 남겨보세요',
+                        style: pretendard(
+                          13,
+                          FontWeight.w400,
+                          AppColors.textSub,
+                        ),
+                      ),
+                    ],
                   ),
-                  Positioned(
-                    left: 9,
-                    right: 9,
-                    bottom: 0,
-                    child: Center(
-                      child: AppToast(
-                        key: _toastKey,
-                        alignment: Alignment.centerLeft,
+                ),
+                const SizedBox(height: 25),
+                JournalCard(
+                  title: '오늘 손가락 상태는 어떤가요?',
+                  titleGap: 13,
+                  childPadding: const EdgeInsets.fromLTRB(18, 0, 18, 11),
+                  child: MoodSelector(
+                    selected: _mood,
+                    onChanged: (mood) => setState(() => _mood = mood),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                JournalCard(
+                  title: '느낀 증상',
+                  childPadding: const EdgeInsets.fromLTRB(25, 0, 18, 9),
+                  child: ChipGroup<Symptom>(
+                    options: _symptomOrder,
+                    labelOf: (s) => s.label,
+                    chipWidthOf: (_) => 67,
+                    selected: _symptoms,
+                    onToggle: _toggleSymptom,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                JournalCard(
+                  title: '주로 한 활동',
+                  childPadding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
+                  child: ChipGroup<Activity>(
+                    options: Activity.values,
+                    labelOf: (a) => a.label,
+                    chipWidthOf: (a) => _activityWidths[a]!,
+                    spacing: 7,
+                    selected: _activities,
+                    onToggle: _toggleActivity,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Stack(
+                  children: [
+                    JournalCard(
+                      title: '한 줄 메모',
+                      titleGap: 16,
+                      childPadding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+                      child: NoteField(controller: _memo),
+                    ),
+                    Positioned(
+                      left: 9,
+                      right: 9,
+                      bottom: 0,
+                      child: Center(
+                        child: AppToast(
+                          key: _toastKey,
+                          alignment: Alignment.centerLeft,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 21),
-              AppButton(
-                label: '오늘 기록 저장',
-                width: double.infinity,
-                height: 48,
-                radius: 14,
-                textStyle: pretendard(18, FontWeight.w600, Colors.white),
-                onPressed: _save,
-              ),
-            ],
+                  ],
+                ),
+                const SizedBox(height: 21),
+                AppButton(
+                  label: '오늘 기록 저장',
+                  width: double.infinity,
+                  height: 48,
+                  radius: 14,
+                  textStyle: pretendard(18, FontWeight.w600, Colors.white),
+                  onPressed: _save,
+                ),
+              ],
+            ),
           ),
         ),
       ),

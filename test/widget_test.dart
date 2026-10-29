@@ -9,7 +9,6 @@ import 'package:gupsin/models/alert.dart';
 import 'package:gupsin/models/hand.dart';
 import 'package:gupsin/models/journal_entry.dart';
 import 'package:gupsin/models/today_metrics.dart';
-import 'package:gupsin/models/weekly.dart';
 import 'package:gupsin/screens/finger.dart';
 import 'package:gupsin/screens/hands.dart';
 import 'package:gupsin/screens/home.dart';
@@ -20,12 +19,16 @@ import 'package:gupsin/screens/alerts.dart';
 import 'package:gupsin/screens/start.dart';
 import 'package:gupsin/services/alerts.dart';
 import 'package:gupsin/services/app_storage.dart';
+import 'package:gupsin/services/metrics_source.dart';
 import 'package:gupsin/services/sensor_connection.dart';
 import 'package:gupsin/widgets/app_button.dart';
 import 'package:gupsin/widgets/app_toast.dart';
+import 'package:gupsin/widgets/calendar.dart';
 import 'package:gupsin/widgets/chart.dart';
 import 'package:gupsin/widgets/finger_number_button.dart';
 import 'package:gupsin/widgets/home/journal_cards.dart';
+
+import 'fixtures.dart';
 
 class FakeSensorLink implements SensorLink {
   bool wifiOn = true;
@@ -73,11 +76,19 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  Future<void> openApp(WidgetTester tester) async {
+  Future<void> openApp(
+    WidgetTester tester, {
+    MetricsSource metrics = const FixtureMetricsSource(),
+  }) async {
     usePhoneSize(tester);
     connection.start();
     await tester.pumpWidget(
-      GupsinApp(storage: storage, connection: connection, alerts: alerts),
+      GupsinApp(
+        storage: storage,
+        connection: connection,
+        alerts: alerts,
+        metrics: metrics,
+      ),
     );
   }
 
@@ -231,6 +242,16 @@ void main() {
   });
 
   group('홈', () {
+    testWidgets('데이터 소스가 연결되기 전에는 빈 값만 보인다', (tester) async {
+      await storage.markOnboardingDone();
+      await openApp(tester, metrics: const EmptyMetricsSource());
+      await tester.pumpAndSettle();
+
+      expect(find.text('60°'), findsNothing);
+      expect(find.text('0분'), findsOneWidget);
+      expect(find.text('0회'), findsOneWidget);
+    });
+
     testWidgets('오늘의 움직임 값이 보인다', (tester) async {
       await openHome(tester);
 
@@ -655,11 +676,12 @@ void main() {
       );
     });
 
-    testWidgets('월간은 아직 준비 중', (tester) async {
+    testWidgets('월간 탭은 달력과 이번 달 합계를 보여준다', (tester) async {
       await openReportTab(tester);
       await tester.tap(inReport('월간'));
       await tester.pumpAndSettle();
-      expect(inReport('월간 리포트는 준비 중이에요.'), findsOneWidget);
+      expect(inReport('이번 달 착용 시간'), findsOneWidget);
+      expect(find.byType(MonthCalendar), findsOneWidget);
     });
 
     testWidgets('과굴곡이 없는 날은 분석 대신 빈 문구', (tester) async {
@@ -667,12 +689,14 @@ void main() {
       await tester.pumpWidget(
         const MaterialApp(
           home: ReportScreen(
-            metrics: TodayMetrics(
-              jointAngle: 30,
-              wearTime: Duration(hours: 1),
-              wearGoal: Duration(hours: 4),
-              overflexCount: 0,
-              hourlyOverflex: [0, 0, 0, 0, 0, 0],
+            source: FixtureMetricsSource(
+              todayMetrics: TodayMetrics(
+                jointAngle: 30,
+                wearTime: Duration(hours: 1),
+                wearGoal: Duration(hours: 4),
+                overflexCount: 0,
+                hourlyOverflex: [0, 0, 0, 0, 0, 0],
+              ),
             ),
           ),
         ),
@@ -681,15 +705,9 @@ void main() {
     });
 
     test('주간 날짜 범위', () {
-      expect(
-        WeeklyMetrics.sample.totalWear,
-        const Duration(hours: 22, minutes: 24),
-      );
-      expect(
-        WeeklyMetrics.sample.averageWear,
-        const Duration(hours: 3, minutes: 12),
-      );
-      expect(WeeklyMetrics.sample.goalPercent, 80);
+      expect(sampleWeek.totalWear, const Duration(hours: 22, minutes: 24));
+      expect(sampleWeek.averageWear, const Duration(hours: 3, minutes: 12));
+      expect(sampleWeek.goalPercent, 80);
     });
   });
 }

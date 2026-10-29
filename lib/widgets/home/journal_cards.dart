@@ -11,6 +11,8 @@ class JournalCard extends StatelessWidget {
     required this.child,
     this.titleGap = 12,
     this.childPadding = const EdgeInsets.fromLTRB(18, 0, 18, 18),
+    this.titlePadding,
+    this.borderColor,
   });
 
   final String title;
@@ -19,19 +21,25 @@ class JournalCard extends StatelessWidget {
   final double titleGap;
   final EdgeInsets childPadding;
 
+  /// Overrides the default title inset (18, 17) and [titleGap].
+  final EdgeInsets? titlePadding;
+  final Color? borderColor;
+
   @override
   Widget build(BuildContext context) {
+    final border = borderColor;
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
+        border: border == null ? null : Border.all(color: border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: EdgeInsets.fromLTRB(18, 17, 18, titleGap),
+            padding: titlePadding ?? EdgeInsets.fromLTRB(18, 17, 18, titleGap),
             child: Text(
               title,
               style: pretendard(15, FontWeight.w600, AppColors.text),
@@ -60,10 +68,12 @@ class MoodSelector extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         for (final mood in Mood.values)
-          _MoodItem(
-            mood: mood,
-            selected: mood == selected,
-            onTap: () => onChanged(mood == selected ? null : mood),
+          Flexible(
+            child: _MoodItem(
+              mood: mood,
+              selected: mood == selected,
+              onTap: () => onChanged(mood == selected ? null : mood),
+            ),
           ),
       ],
     );
@@ -94,7 +104,9 @@ class _MoodItem extends StatelessWidget {
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          width: 60,
+          // Shrinks below 60 only when five items no longer fit.
+          constraints: const BoxConstraints(maxWidth: 60),
+          width: double.infinity,
           height: 67,
           decoration: BoxDecoration(
             color: selected ? AppColors.primarySoft : Colors.transparent,
@@ -110,7 +122,13 @@ class _MoodItem extends StatelessWidget {
                 colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
               ),
               const SizedBox(height: 9),
-              Text(mood.label, style: pretendard(10, FontWeight.w500, color)),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  mood.label,
+                  style: pretendard(10, FontWeight.w500, color),
+                ),
+              ),
             ],
           ),
         ),
