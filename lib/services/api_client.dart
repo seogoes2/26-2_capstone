@@ -24,6 +24,7 @@ class ApiClient {
     this.baseUrl = defaultBaseUrl,
     this.timeout = const Duration(seconds: 5),
     String? Function()? token,
+    this.onUnauthorized,
     http.Client? client,
   }) : _token = token ?? _noToken,
        _client = client ?? http.Client();
@@ -47,16 +48,53 @@ class ApiClient {
   final String? Function() _token;
   final http.Client _client;
 
+  /// Called once when a request comes back 401 (token missing or expired).
+  /// Return true after getting a new token to retry the request.
+  final Future<bool> Function()? onUnauthorized;
+
   Future<Object?> get(String path, {Map<String, String>? query}) =>
       _send('GET', path, query: query);
 
-  Future<Object?> post(String path, Object? body) =>
-      _send('POST', path, body: body);
+  /// [reauth] false for the login call itself, so a wrong password doesn't
+  /// trigger another login.
+  Future<Object?> post(
+    String path,
+    Object? body, {
+    Map<String, String>? query,
+    bool reauth = true,
+  }) => _send('POST', path, query: query, body: body, reauth: reauth);
 
-  Future<Object?> put(String path, Object? body) =>
-      _send('PUT', path, body: body);
+  Future<Object?> put(
+    String path,
+    Object? body, {
+    Map<String, String>? query,
+  }) => _send('PUT', path, query: query, body: body);
+
+  Future<Object?> patch(
+    String path,
+    Object? body, {
+    Map<String, String>? query,
+  }) => _send('PATCH', path, query: query, body: body);
 
   Future<Object?> _send(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Object? body,
+    bool reauth = true,
+  }) async {
+    try {
+      return await _sendOnce(method, path, query: query, body: body);
+    } on ApiException catch (e) {
+      final renew = onUnauthorized;
+      if (!e.unauthorized || !reauth || renew == null || !await renew()) {
+        rethrow;
+      }
+      return _sendOnce(method, path, query: query, body: body);
+    }
+  }
+
+  Future<Object?> _sendOnce(
     String method,
     String path, {
     Map<String, String>? query,

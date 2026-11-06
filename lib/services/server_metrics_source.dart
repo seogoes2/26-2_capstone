@@ -1,56 +1,76 @@
 import '../models/monthly.dart';
 import '../models/today_metrics.dart';
 import '../models/weekly.dart';
-import 'api_client.dart';
+import 'backend_session.dart';
 import 'metrics_source.dart';
 import 'server_api.dart';
 
-/// Reads usage numbers from the backend.
+/// Reads usage numbers from the backend's `/dashboard/*` endpoints.
 ///
-/// Weekly and monthly views are built from the per-day range endpoint, and
-/// comparisons (yesterday, last week) are computed here, so the server only
-/// has to store per-day summaries.
+/// The server aggregates on every call, so new sensor readings show up the
+/// next time a screen loads or is pulled to refresh.
 class ServerMetricsSource implements MetricsSource {
-  ServerMetricsSource(this._api, {DateTime Function()? now})
+  ServerMetricsSource(this._session, {DateTime Function()? now})
     : _now = now ?? DateTime.now;
 
-  final ApiClient _api;
+  final BackendSession _session;
   final DateTime Function() _now;
+
+  DateTime get _today => _dateOnly(_now());
 
   @override
   Future<TodayMetrics> today(DateTime day) async {
-    final t = ServerApi.today(await _summary(day));
-    final yesterday = await _summary(_addDays(day, -1));
-    final change = yesterday == null
-        ? null
-        : t.overflexCount - ServerApi.today(yesterday).overflexCount;
-    return TodayMetrics(
-      jointAngle: t.jointAngle,
-      romMin: t.romMin,
-      romMax: t.romMax,
-      wearTime: t.wearTime,
-      wearGoal: t.wearGoal,
-      overflexCount: t.overflexCount,
-      overflexChangeFromYesterday: change,
-      maxOverAngle: t.maxOverAngle,
-      hourlyOverflex: t.hourlyOverflex,
+    final api = _session.api;
+    final id = await _session.deviceId();
+    final isToday = _dateOnly(day) == _today;
+    final (daily, hourly, yesterday, overview) = await (
+      api.get(ServerApi.daily, query: ServerApi.dayQuery(id, day)),
+      api.get(ServerApi.hourly, query: ServerApi.dayQuery(id, day)),
+      api.get(
+        ServerApi.daily,
+        query: ServerApi.dayQuery(id, _addDays(day, -1)),
+      ),
+      // Live angle and wear goal only exist for today.
+      isToday
+          ? api.get(ServerApi.overview, query: {'device_id': id})
+          : Future<Object?>.value(),
+    ).wait;
+    return ServerApi.today(
+      daily,
+      hourly: hourly,
+      overview: overview,
+      yesterdayOverflex: ServerApi.overflexOn(yesterday),
     );
   }
 
   @override
   Future<WeeklyMetrics> week(DateTime monday) async {
-    final lastMonday = _addDays(monday, -7);
-    final records = await _range(lastMonday, _addDays(monday, 6));
+    final start = _dateOnly(monday);
+    final today = _today;
+    if (start.isAfter(today)) return WeeklyMetrics.empty;
 
-    // Stop at today so the chart doesn't drop to zero for days to come.
-    final today = _dateOnly(_now());
+    // The server returns the 7 days ending at end_date and refuses future
+    // dates, so this week stops at today.
+    final sunday = _addDays(start, 6);
+    final end = sunday.isAfter(today) ? today : sunday;
+
+    final api = _session.api;
+    final id = await _session.deviceId();
+    final (thisJson, lastJson) = await (
+      api.get(ServerApi.weekly, query: ServerApi.weekQuery(id, end)),
+      api.get(
+        ServerApi.weekly,
+        query: ServerApi.weekQuery(id, _addDays(start, -1)),
+      ),
+    ).wait;
+
+    final thisDays = ServerApi.days(thisJson);
     final thisWeek = [
-      for (var i = 0; i < 7; i++)
-        if (!_addDays(monday, i).isAfter(today)) records[_addDays(monday, i)],
+      for (var d = start; !d.isAfter(end); d = _addDays(d, 1)) thisDays[d],
     ];
-    final lastWeek = [
-      for (var i = 0; i < 7; i++) records[_addDays(lastMonday, i)],
-    ].nonNulls.where((r) => r.hasRecord).toList();
+    final lastWeek = ServerApi.days(lastJson).values
+        .where((r) => r.hasRecord)
+        .toList();
 
     int? maxOver;
     for (final a in thisWeek.map((r) => r?.maxOverAngle).nonNulls) {
@@ -60,7 +80,7 @@ class ServerMetricsSource implements MetricsSource {
     return WeeklyMetrics(
       dailyWear: [for (final r in thisWeek) r?.wear ?? Duration.zero],
       overflexCount: thisWeek.fold(0, (s, r) => s + (r?.overflexCount ?? 0)),
-      wearGoalPerDay: defaultWearGoal,
+      wearGoalPerDay: ServerApi.wearGoal(thisJson),
       maxOverAngle: maxOver,
       lastWeekAverageWear: lastWeek.isEmpty
           ? null
@@ -76,41 +96,27 @@ class ServerMetricsSource implements MetricsSource {
 
   @override
   Future<MonthlyMetrics> month(int year, int month) async {
-    final records = await _range(
-      DateTime(year, month),
-      DateTime(year, month + 1, 0),
+    final today = _today;
+    if (DateTime(year, month).isAfter(today)) {
+      return MonthlyMetrics.empty(year, month);
+    }
+    final id = await _session.deviceId();
+    final json = await _session.api.get(
+      ServerApi.monthly,
+      query: ServerApi.monthQuery(id, year, month),
     );
     return MonthlyMetrics(
       year: year,
       month: month,
-      wearGoalPerDay: defaultWearGoal,
+      wearGoalPerDay: ServerApi.wearGoal(json),
       days: {
-        for (final MapEntry(key: date, value: r) in records.entries)
+        for (final MapEntry(key: date, value: r) in ServerApi.days(
+          json,
+        ).entries)
           if (date.year == year && date.month == month) date.day: r,
       },
     );
   }
-
-  /// One day's summary, or null when the server has nothing for that day.
-  Future<Object?> _summary(DateTime day) async {
-    try {
-      return await _api.get(
-        ServerApi.dailySummary,
-        query: ServerApi.dayQuery(day),
-      );
-    } on ApiException catch (e) {
-      if (e.notFound) return null;
-      rethrow;
-    }
-  }
-
-  Future<Map<DateTime, DayRecord>> _range(DateTime start, DateTime end) async =>
-      ServerApi.days(
-        await _api.get(
-          ServerApi.dailyRange,
-          query: ServerApi.rangeQuery(start, end),
-        ),
-      );
 
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
