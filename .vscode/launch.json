@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "iPhone (LAN 서버)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "00008150-001074143A61401C",
+      "args": ["--dart-define=API_BASE_URL=http://192.168.0.25:8000"]
+    },
+    {
+      "name": "시뮬레이터 (로컬 서버)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart"
+    }
+  ]
+}
