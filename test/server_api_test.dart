@@ -3,8 +3,11 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:gupsin/services/api_client.dart';
+import 'package:gupsin/services/app_storage.dart';
+import 'package:gupsin/services/backend_session.dart';
 import 'package:gupsin/services/sensor_connection.dart';
 import 'package:gupsin/services/server_api.dart';
 import 'package:gupsin/services/server_metrics_source.dart';
@@ -73,66 +76,104 @@ void main() {
     });
   });
 
-  group('센서 상태 읽기', () {
-    final now = DateTime(2026, 10, 29, 12);
+  /// A logged-in session on a fake backend, reading device GUBSIN-DEMO-001.
+  Future<BackendSession> session(
+    Object? Function(http.Request request) handler, {
+    List<http.Request>? log,
+    String deviceId = 'GUBSIN-DEMO-001',
+    Map<String, Object> prefs = const {'api_access_token': 'test-token'},
+  }) async {
+    SharedPreferences.setMockInitialValues(prefs);
+    return BackendSession(
+      await AppStorage.load(),
+      baseUrl: 'http://server.test',
+      email: 'demo@gubsin.example',
+      password: 'pw',
+      deviceId: deviceId,
+      client: MockClient((request) async {
+        log?.add(request);
+        final body = handler(request);
+        if (body is int) return http.Response('', body);
+        return http.Response.bytes(
+          utf8.encode(jsonEncode(body)),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+  }
 
-    test('이름·배터리·신호·기록 수를 읽는다', () {
-      final s = ServerApi.sensorStatus(
-        {
-          'name': 'GUPSIN_SENSOR_03',
-          'battery': 40,
-          'rssi': -85,
-          'today_records': 12,
-        },
-        responseTime: Duration.zero,
-        now: now,
-      )!;
-      expect(s.displayName, '굽신굽신 · 센서 03');
-      expect(s.batteryPercent, 40);
-      expect(s.signalLabel, '신호 약함');
-      expect(s.todayRecords, 12);
+  group('로그인·기기', () {
+    test('401이면 로그인해서 새 토큰으로 한 번 다시 요청한다', () async {
+      final log = <http.Request>[];
+      final s = await session((r) {
+        if (r.url.path == ServerApi.login) return {'access_token': 'fresh'};
+        return r.headers['Authorization'] == 'Bearer fresh' ? {'ok': 1} : 401;
+      }, log: log);
+
+      expect(await s.api.get('/ping'), {'ok': 1});
+      expect(log.map((r) => r.url.path), ['/ping', ServerApi.login, '/ping']);
+      expect(jsonDecode(log[1].body), {
+        'email': 'demo@gubsin.example',
+        'password': 'pw',
+      });
     });
 
-    test('값이 없어도 연결된 것으로 본다', () {
-      final s = ServerApi.sensorStatus(
-        {},
-        responseTime: const Duration(milliseconds: 100),
-        now: now,
-      )!;
-      expect(s.displayName, '굽신굽신 센서');
-      expect(s.batteryPercent, isNull);
-      expect(s.signalLabel, '신호 원활');
-    });
-
-    test('서버가 센서 소식을 1분 넘게 못 받았으면 끊긴 것으로 본다', () {
-      Object status(Duration ago) => {
-        'last_seen': now.subtract(ago).toUtc().toIso8601String(),
-      };
-      expect(
-        ServerApi.sensorStatus(
-          status(const Duration(seconds: 30)),
-          responseTime: Duration.zero,
-          now: now,
-        ),
-        isNotNull,
+    test('로그인도 실패하면 401을 그대로 던진다', () async {
+      final s = await session((_) => 401);
+      await expectLater(
+        s.api.get('/ping'),
+        throwsA(isA<ApiException>().having((e) => e.unauthorized, '401', true)),
       );
+    });
+
+    test('기기 ID를 안 주면 계정의 첫 기기를 쓴다', () async {
+      final s = await session(
+        (_) => {
+          'devices': [
+            {'device_id': 'GUBSIN-007'},
+            {'device_id': 'GUBSIN-008'},
+          ],
+        },
+        deviceId: '',
+      );
+      expect(await s.deviceId(), 'GUBSIN-007');
+    });
+  });
+
+  group('센서 상태', () {
+    test('서버가 연결됐다고 하면 기기 ID·배터리를 읽는다', () {
+      final s = ServerApi.sensorStatus({
+        'device_id': 'GUBSIN-DEMO-001',
+        'is_connected': true,
+        'battery': 40,
+      }, responseTime: Duration.zero)!;
+      expect(s.displayName, '굽신굽신 · 센서 001');
+      expect(s.batteryPercent, 40);
+    });
+
+    test('is_connected가 false면 끊긴 것으로 본다', () {
       expect(
-        ServerApi.sensorStatus(
-          status(const Duration(minutes: 2)),
-          responseTime: Duration.zero,
-          now: now,
-        ),
+        ServerApi.sensorStatus({
+          'is_connected': false,
+          'battery': 65,
+        }, responseTime: Duration.zero),
         isNull,
       );
     });
 
-    test('서버에 닿지 않으면 연결 끊김, 설정은 서버 형식으로 보낸다', () async {
-      final down = ServerSensorLink(fakeServer((_) => 500));
+    test('상태는 기기별 경로, 설정은 PATCH /settings/rom 형식으로 보낸다', () async {
+      final down = ServerSensorLink(await session((_) => 500));
       expect(await down.fetchStatus(), isNull);
       expect(await down.sendSettings({'romLimit': 45}), isFalse);
 
       final log = <http.Request>[];
-      final link = ServerSensorLink(fakeServer((_) => {}, log: log));
+      final link = ServerSensorLink(
+        await session((_) => {'is_connected': true}, log: log),
+      );
+      expect(await link.fetchStatus(), isNotNull);
+      expect(log.last.url.path, '/devices/GUBSIN-DEMO-001/status');
+
       expect(
         await link.sendSettings({
           'romLimit': 60,
@@ -141,67 +182,98 @@ void main() {
         }),
         isTrue,
       );
-      expect(log.single.method, 'PUT');
-      expect(log.single.url.path, ServerApi.deviceSettings);
-      expect(jsonDecode(log.single.body), {
-        'rom_limit': 60,
-        'vibration_start_angle': 55,
-        'vibration_seconds': 5,
+      expect(log.last.method, 'PATCH');
+      expect(log.last.url.path, ServerApi.romSettings);
+      expect(log.last.url.queryParameters, {'device_id': 'GUBSIN-DEMO-001'});
+      expect(jsonDecode(log.last.body), {
+        'limit_angle': 60,
+        'vibration_duration_ms': 5000,
       });
     });
   });
 
   group('ServerMetricsSource', () {
-    Map<String, Object?> day(String date, int wear, int overflex, [int? max]) =>
-        {
-          'date': date,
-          'wear_minutes': wear,
-          'overflex_count': overflex,
-          'max_over_angle': max,
-        };
+    Map<String, Object?> day(
+      String date,
+      num wear,
+      int overflex, [
+      num excess = 0,
+    ]) => {
+      'date': date,
+      'wear_minutes': wear,
+      'overflexion_count': overflex,
+      'max_excess_angle': excess,
+      'total_readings': wear > 0 ? 4 : 0,
+    };
 
-    test('오늘 요약과 어제 대비 과굴곡 변화를 만든다', () async {
+    test('오늘: 일간·시간대·홈 요약을 합치고 어제와 비교한다', () async {
+      final log = <http.Request>[];
       final source = ServerMetricsSource(
-        fakeServer((r) {
-          if (r.url.path != ServerApi.dailySummary) return 404;
-          return switch (r.url.queryParameters['date']) {
-            '2026-10-29' => {
-              'joint_angle': 52,
-              'wear_minutes': 156,
-              'overflex_count': 7,
-              'max_over_angle': 8,
-              'hourly_overflex': [0, 1, 0, 4, 1, 1],
+        await session((r) {
+          final date = r.url.queryParameters['target_date'];
+          return switch (r.url.path) {
+            ServerApi.daily when date == '2026-11-06' => day(
+              '2026-11-06',
+              163.0,
+              3,
+              6.7,
+            ),
+            ServerApi.daily => day('2026-11-05', 150, 5),
+            ServerApi.hourly => {
+              'hourly': [
+                for (var h = 0; h < 24; h++)
+                  {'hour': h, 'overflexion_count': h == 9 || h == 10 ? 1 : 0},
+              ],
             },
-            '2026-10-28' => {'overflex_count': 9},
+            ServerApi.overview => {
+              'realtime': {'angle': 49.1},
+              'today': {'target_wear_minutes': 120},
+            },
             _ => 404,
           };
-        }),
+        }, log: log),
+        now: () => DateTime(2026, 11, 6, 15),
       );
-      final t = await source.today(DateTime(2026, 10, 29));
-      expect(t.jointAngle, 52);
-      expect(t.wearTime, const Duration(hours: 2, minutes: 36));
-      expect(t.overflexCount, 7);
+      final t = await source.today(DateTime(2026, 11, 6));
+
+      expect(t.jointAngle, 49);
+      expect(t.wearTime, const Duration(hours: 2, minutes: 43));
+      expect(t.wearGoal, const Duration(hours: 2));
+      expect(t.overflexCount, 3);
       expect(t.overflexChangeFromYesterday, -2);
-      expect(t.hourlyOverflex, [0, 1, 0, 4, 1, 1]);
+      expect(t.maxOverAngle, 7);
+      expect(t.hourlyOverflex, [0, 2, 0, 0, 0, 0]);
+      expect(
+        log.every(
+          (r) => r.url.queryParameters['device_id'] == 'GUBSIN-DEMO-001',
+        ),
+        isTrue,
+      );
     });
 
-    test('어제 기록이 없으면(404) 변화는 비워 둔다', () async {
+    test('어제 측정이 하나도 없으면 변화는 비워 두고, 초과 0°는 값 없음', () async {
       final source = ServerMetricsSource(
-        fakeServer(
-          (r) => r.url.queryParameters['date'] == '2026-10-29'
-              ? {'overflex_count': 3}
-              : 404,
+        await session(
+          (r) => r.url.queryParameters['target_date'] == '2026-11-06'
+              ? day('2026-11-06', 30, 0)
+              : day('2026-11-05', 0, 0),
         ),
+        now: () => DateTime(2026, 11, 6, 15),
       );
-      final t = await source.today(DateTime(2026, 10, 29));
-      expect(t.overflexCount, 3);
+      final t = await source.today(DateTime(2026, 11, 6));
       expect(t.overflexChangeFromYesterday, isNull);
+      expect(t.maxOverAngle, isNull);
+      expect(t.hourlyOverflex, isEmpty);
     });
 
     test('24시간 값은 06시부터 3시간씩 묶는다', () {
-      final hours = List.generate(24, (h) => h);
+      final hourly = {
+        'hourly': [
+          for (var h = 0; h < 24; h++) {'hour': h, 'overflexion_count': h},
+        ],
+      };
       // 6+7+8, 9+10+11, ...
-      expect(ServerApi.today({'hourly_overflex': hours}).hourlyOverflex, [
+      expect(ServerApi.today({}, hourly: hourly).hourlyOverflex, [
         21,
         30,
         39,
@@ -211,66 +283,94 @@ void main() {
       ]);
     });
 
-    test('주간: 오늘까지만 담고 지난주 평균과 비교한다', () async {
+    test('주간: 이번 주는 오늘까지, 지난주는 지난 일요일 기준으로 받는다', () async {
       final log = <http.Request>[];
       final source = ServerMetricsSource(
-        fakeServer(
-          (_) => {
-            'days': [
-              // Last week: 7 h in total over two days.
-              day('2026-10-20', 180, 10),
-              day('2026-10-22', 240, 5),
-              // This week (Mon 10-26 … today Thu 10-29).
-              day('2026-10-26', 120, 2, 9),
-              day('2026-10-28', 200, 4, 14),
-              day('2026-10-29', 60, 1, 3),
-            ],
-          },
-          log: log,
-        ),
-        now: () => DateTime(2026, 10, 29, 15),
+        await session((r) {
+          final end = r.url.queryParameters['end_date'];
+          return switch (end) {
+            // The 7 days ending today (Fri) start on last Saturday.
+            '2026-11-06' => {
+              'target_wear_minutes_per_day': 120,
+              'daily': [
+                day('2026-10-31', 85, 9),
+                day('2026-11-01', 98, 9),
+                day('2026-11-02', 120, 2, 9.4),
+                day('2026-11-03', 0, 0),
+                day('2026-11-04', 200, 4, 14),
+                day('2026-11-05', 60, 1, 3),
+                day('2026-11-06', 30, 0),
+              ],
+            },
+            '2026-11-01' => {
+              'daily': [day('2026-10-26', 180, 10), day('2026-10-28', 240, 5)],
+            },
+            _ => 404,
+          };
+        }, log: log),
+        now: () => DateTime(2026, 11, 6, 15),
       );
-      final w = await source.week(DateTime(2026, 10, 26));
+      final w = await source.week(DateTime(2026, 11, 2));
 
-      expect(log.single.url.queryParameters, {
-        'start': '2026-10-19',
-        'end': '2026-11-01',
-      });
+      expect(log.map((r) => r.url.queryParameters['end_date']), [
+        '2026-11-06',
+        '2026-11-01',
+      ]);
       expect(w.dailyWear, const [
         Duration(minutes: 120),
         Duration.zero,
         Duration(minutes: 200),
         Duration(minutes: 60),
+        Duration(minutes: 30),
       ]);
       expect(w.overflexCount, 7);
       expect(w.maxOverAngle, 14);
+      expect(w.wearGoalPerDay, const Duration(hours: 2));
       expect(w.lastWeekAverageWear, const Duration(minutes: 60));
       expect(w.lastWeekOverflex, 15);
+    });
+
+    test('주간·월간: 미래 기간은 서버에 묻지 않고 비운다', () async {
+      final log = <http.Request>[];
+      final source = ServerMetricsSource(
+        await session((_) => 422, log: log),
+        now: () => DateTime(2026, 11, 6, 15),
+      );
+      expect((await source.week(DateTime(2026, 11, 9))).hasRecords, isFalse);
+      expect((await source.month(2026, 12)).hasRecords, isFalse);
+      expect(log, isEmpty);
     });
 
     test('월간: 그 달 날짜만 일자별로 담는다', () async {
       final log = <http.Request>[];
       final source = ServerMetricsSource(
-        fakeServer(
-          (_) => [
-            day('2026-09-30', 100, 1),
-            day('2026-10-02', 150, 3, 12),
-            day('2026-10-17', 0, 0),
-            'not a day',
-          ],
+        await session(
+          (_) => {
+            'target_wear_minutes_per_day': 120,
+            'daily': [
+              day('2026-09-30', 100, 1),
+              day('2026-10-02', 150, 3, 12),
+              day('2026-10-17', 0, 0),
+              'not a day',
+            ],
+          },
           log: log,
         ),
+        now: () => DateTime(2026, 11, 6, 15),
       );
       final m = await source.month(2026, 10);
 
+      expect(log.single.url.path, ServerApi.monthly);
       expect(log.single.url.queryParameters, {
-        'start': '2026-10-01',
-        'end': '2026-10-31',
+        'device_id': 'GUBSIN-DEMO-001',
+        'year': '2026',
+        'month': '10',
       });
       expect(m.days.keys, [2, 17]);
       expect(m.recordedDays, 1);
       expect(m.totalWear, const Duration(minutes: 150));
       expect(m.maxOverAngle, 12);
+      expect(m.wearGoalPerDay, const Duration(hours: 2));
     });
   });
 }

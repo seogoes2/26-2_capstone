@@ -4,103 +4,162 @@ import 'sensor_connection.dart';
 
 /// Everything that depends on the backend's API shape, in one place.
 ///
-/// The paths and JSON field names below are placeholders until they are
-/// checked against Swagger (http://127.0.0.1:8000/docs). Each spot to confirm
-/// is marked `TODO(/docs)`. The parsers tolerate missing or differently named
-/// fields, so a wrong guess shows up as an empty value instead of a crash.
+/// Matches gubsin_back (FastAPI). See its UI_API.md and
+/// http://127.0.0.1:8000/docs. The parsers tolerate missing fields, so a
+/// change on the server shows up as an empty value instead of a crash.
 abstract final class ServerApi {
   // ── Endpoints ────────────────────────────────────────────────────────────
 
-  // TODO(/docs): one day's summary. Query: date=YYYY-MM-DD
-  static const dailySummary = '/metrics/daily';
+  static const login = '/auth/login';
 
-  // TODO(/docs): per-day summaries for a date range (inclusive).
-  // Query: start=YYYY-MM-DD&end=YYYY-MM-DD
-  static const dailyRange = '/metrics/days';
+  /// The account's devices: `{"devices": [{"device_id": ...}, ...]}`.
+  static const devices = '/devices';
 
-  // TODO(/docs): the sensor's latest status as last reported to the server.
-  static const deviceStatus = '/device/status';
+  /// Today only: live angle, wear goal, change in overflexion from yesterday.
+  /// Query: device_id
+  static const overview = '/dashboard/overview';
 
-  // TODO(/docs): settings the sensor picks up from the server.
-  static const deviceSettings = '/device/settings';
+  /// One day's totals. Query: device_id, target_date=YYYY-MM-DD
+  static const daily = '/dashboard/daily';
+
+  /// 24 hourly buckets for one day. Query: device_id, target_date
+  static const hourly = '/dashboard/overflexion/hourly';
+
+  /// The 7 days ending at end_date (not in the future).
+  /// Query: device_id, end_date
+  static const weekly = '/dashboard/weekly';
+
+  /// One calendar month, up to today. Query: device_id, year, month
+  static const monthly = '/dashboard/monthly';
+
+  /// The sensor's last contact with the server.
+  static String deviceStatus(String deviceId) =>
+      '/devices/${Uri.encodeComponent(deviceId)}/status';
+
+  /// ROM and vibration settings. PATCH with query device_id.
+  static const romSettings = '/settings/rom';
 
   static String date(DateTime d) => '${d.year}-${_two(d.month)}-${_two(d.day)}';
 
-  static Map<String, String> dayQuery(DateTime day) => {'date': date(day)};
-
-  static Map<String, String> rangeQuery(DateTime start, DateTime end) => {
-    'start': date(start),
-    'end': date(end),
+  static Map<String, String> dayQuery(String deviceId, DateTime day) => {
+    'device_id': deviceId,
+    'target_date': date(day),
   };
+
+  static Map<String, String> weekQuery(String deviceId, DateTime end) => {
+    'device_id': deviceId,
+    'end_date': date(end),
+  };
+
+  static Map<String, String> monthQuery(String deviceId, int year, int month) =>
+      {'device_id': deviceId, 'year': '$year', 'month': '$month'};
 
   // ── Responses ────────────────────────────────────────────────────────────
 
-  /// One day's summary → [TodayMetrics]. The day-over-day change is filled in
-  /// by the caller.
-  static TodayMetrics today(Object? json) {
-    final m = _map(json);
+  /// `GET /devices` → the first device's id, or null.
+  static String? firstDeviceId(Object? json) {
+    final list = _list(json is Map ? json['devices'] : json);
+    for (final item in list.map(_map)) {
+      final id = item['device_id'];
+      if (id is String && id.isNotEmpty) return id;
+    }
+    return null;
+  }
+
+  /// `/dashboard/daily` (+ hourly, + overview for today) → [TodayMetrics].
+  static TodayMetrics today(
+    Object? daily, {
+    Object? hourly,
+    Object? overview,
+    int? yesterdayOverflex,
+  }) {
+    final d = _map(daily);
+    final o = _map(overview);
+    final realtime = _map(o['realtime']);
+    final today = _map(o['today']);
+    final overflex = _int(d['overflexion_count']) ?? 0;
+    final goal = _int(today['target_wear_minutes']);
     return TodayMetrics(
-      // TODO(/docs): field names
-      jointAngle: _int(m['joint_angle'] ?? m['current_angle']),
-      wearTime: _minutes(m['wear_minutes']),
-      wearGoal: defaultWearGoal,
-      overflexCount: _int(m['overflex_count']) ?? 0,
-      maxOverAngle: _int(m['max_over_angle']),
-      hourlyOverflex: _hourly(m['hourly_overflex']),
+      jointAngle: _int(realtime['angle']),
+      wearTime: _minutes(d['wear_minutes']),
+      wearGoal: goal == null || goal <= 0
+          ? defaultWearGoal
+          : Duration(minutes: goal),
+      overflexCount: overflex,
+      overflexChangeFromYesterday: yesterdayOverflex == null
+          ? null
+          : overflex - yesterdayOverflex,
+      maxOverAngle: _excess(d['max_excess_angle']),
+      hourlyOverflex: _hourly(hourlyCounts(hourly)),
     );
   }
 
-  /// A range of per-day summaries → day records keyed by local date.
-  /// Accepts either a bare list or `{"days": [...]}`.
-  static Map<DateTime, DayRecord> days(Object? json) {
-    final items = json is Map ? _list(json['days'] ?? json['items']) : json;
-    return {
-      for (final item in _list(items).map(_map))
-        // Entries without a readable date are skipped.
-        ?_date(item['date']): DayRecord(
-          // TODO(/docs): field names
-          wear: _minutes(item['wear_minutes']),
-          overflexCount: _int(item['overflex_count']) ?? 0,
-          maxOverAngle: _int(item['max_over_angle']),
-        ),
-    };
+  /// `/dashboard/daily` → that day's overflexion count, or null when the
+  /// sensor recorded nothing that day.
+  static int? overflexOn(Object? daily) {
+    final d = _map(daily);
+    final readings = _int(d['total_readings']) ?? 0;
+    final wear = _num(d['wear_minutes']) ?? 0;
+    final overflex = _int(d['overflexion_count']) ?? 0;
+    if (readings == 0 && wear == 0 && overflex == 0) return null;
+    return overflex;
   }
 
-  /// The sensor counts as disconnected once the server hasn't heard from it
-  /// for this long.
-  static const offlineAfter = Duration(minutes: 1);
+  /// `/dashboard/overflexion/hourly` → 24 overflexion counts by hour.
+  static List<int> hourlyCounts(Object? json) {
+    final counts = List.filled(24, 0);
+    final items = _list(json is Map ? json['hourly'] : json);
+    var seen = false;
+    for (final item in items.map(_map)) {
+      final hour = _int(item['hour']);
+      if (hour == null || hour < 0 || hour > 23) continue;
+      counts[hour] = _int(item['overflexion_count']) ?? 0;
+      seen = true;
+    }
+    return seen ? counts : const [];
+  }
 
-  /// Device status → [SensorStatus], or null when the sensor is offline.
+  /// `/dashboard/weekly` or `/dashboard/monthly` → day records by date.
+  static Map<DateTime, DayRecord> days(Object? json) => {
+    for (final item in _list(_map(json)['daily']).map(_map))
+      // Entries without a readable date are skipped.
+      ?_date(item['date']): DayRecord(
+        wear: _minutes(item['wear_minutes']),
+        overflexCount: _int(item['overflexion_count']) ?? 0,
+        maxOverAngle: _excess(item['max_excess_angle']),
+      ),
+  };
+
+  /// Daily wear goal from a weekly/monthly response.
+  static Duration wearGoal(Object? json) {
+    final m = _int(_map(json)['target_wear_minutes_per_day']);
+    return m == null || m <= 0 ? defaultWearGoal : Duration(minutes: m);
+  }
+
+  /// Device status → [SensorStatus], or null when the sensor hasn't talked to
+  /// the server lately (the server decides: `is_connected`).
   static SensorStatus? sensorStatus(
     Object? json, {
     required Duration responseTime,
-    required DateTime now,
   }) {
     final m = _map(json);
-    // TODO(/docs): field names
-    final lastSeen = DateTime.tryParse('${m['last_seen'] ?? ''}')?.toLocal();
-    if (m['online'] == false ||
-        (lastSeen != null && now.difference(lastSeen) > offlineAfter)) {
-      return null;
-    }
-    final name = m['name'] ?? m['device_name'];
+    if (m['is_connected'] != true) return null;
+    final id = m['device_id'];
     return SensorStatus(
-      name: name is String && name.isNotEmpty ? name : 'GUPSIN_SENSOR',
+      name: id is String && id.isNotEmpty ? id : 'GUPSIN_SENSOR',
       batteryPercent: _int(m['battery']),
-      rssi: _int(m['rssi']),
-      todayRecords: _int(m['today_records']),
       responseTime: responseTime,
     );
   }
 
   // ── Requests ─────────────────────────────────────────────────────────────
 
-  /// App settings ([DeviceSettings.toJson]) → request body.
+  /// App settings ([DeviceSettings.toJson]) → `PATCH /settings/rom` body.
+  /// The server derives the vibration start angle (ROM − 5°) itself.
   static Map<String, Object?> settings(Map<String, Object?> app) => {
-    // TODO(/docs): field names
-    'rom_limit': app['romLimit'],
-    'vibration_start_angle': app['vibrationStartAngle'],
-    'vibration_seconds': app['vibrationSeconds'],
+    if (app['romLimit'] is int) 'limit_angle': app['romLimit'],
+    if (app['vibrationSeconds'] is int)
+      'vibration_duration_ms': (app['vibrationSeconds'] as int) * 1000,
   };
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -111,7 +170,16 @@ abstract final class ServerApi {
 
   static List<Object?> _list(Object? v) => v is List ? v : const [];
 
+  static num? _num(Object? v) => v is num ? v : null;
+
   static int? _int(Object? v) => v is num ? v.round() : null;
+
+  /// The server reports 0 when nothing went over the limit; show that as
+  /// "no value" rather than 0°.
+  static int? _excess(Object? v) {
+    final n = _int(v);
+    return n == null || n <= 0 ? null : n;
+  }
 
   static Duration _minutes(Object? v) =>
       v is num ? Duration(minutes: v.round()) : Duration.zero;
@@ -125,8 +193,7 @@ abstract final class ServerApi {
 
   /// Six 3-hour buckets starting at 06 (see [TodayMetrics.hourlyLabels]).
   /// Accepts those six counts directly, or 24 hourly counts to bucket here.
-  static List<int> _hourly(Object? v) {
-    final counts = [for (final c in _list(v)) _int(c) ?? 0];
+  static List<int> _hourly(List<int> counts) {
     final buckets = TodayMetrics.hourlyLabels.length;
     if (counts.length == buckets) return counts;
     if (counts.length != 24) return const [];

@@ -4,6 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'backend_session.dart';
 import 'server_api.dart';
 
 @immutable
@@ -56,16 +57,11 @@ abstract class SensorLink {
 /// Reads the sensor's state through the backend: the sensor reports to the
 /// server over Wi-Fi, and the app asks the server.
 class ServerSensorLink implements SensorLink {
-  ServerSensorLink(
-    this._api, {
-    Connectivity? connectivity,
-    DateTime Function()? now,
-  }) : _connectivity = connectivity ?? Connectivity(),
-       _now = now ?? DateTime.now;
+  ServerSensorLink(this._session, {Connectivity? connectivity})
+    : _connectivity = connectivity ?? Connectivity();
 
-  final ApiClient _api;
+  final BackendSession _session;
   final Connectivity _connectivity;
-  final DateTime Function() _now;
 
   // The demo server runs on a laptop in the same Wi-Fi, so the phone needs
   // Wi-Fi (not just mobile data) to reach it.
@@ -84,12 +80,9 @@ class ServerSensorLink implements SensorLink {
   Future<SensorStatus?> fetchStatus() async {
     final watch = Stopwatch()..start();
     try {
-      final json = await _api.get(ServerApi.deviceStatus);
-      return ServerApi.sensorStatus(
-        json,
-        responseTime: watch.elapsed,
-        now: _now(),
-      );
+      final id = await _session.deviceId();
+      final json = await _session.api.get(ServerApi.deviceStatus(id));
+      return ServerApi.sensorStatus(json, responseTime: watch.elapsed);
     } on ApiException {
       return null;
     }
@@ -97,8 +90,15 @@ class ServerSensorLink implements SensorLink {
 
   @override
   Future<bool> sendSettings(Map<String, Object?> settings) async {
+    final body = ServerApi.settings(settings);
+    if (body.isEmpty) return false;
     try {
-      await _api.put(ServerApi.deviceSettings, ServerApi.settings(settings));
+      final id = await _session.deviceId();
+      await _session.api.patch(
+        ServerApi.romSettings,
+        body,
+        query: {'device_id': id},
+      );
       return true;
     } on ApiException {
       return false;
@@ -164,10 +164,10 @@ class SensorConnection extends ChangeNotifier {
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
-  factory SensorConnection.fromEnvironment(ApiClient api) {
+  factory SensorConnection.fromEnvironment(BackendSession session) {
     const mode = String.fromEnvironment('SENSOR_MODE');
     return SensorConnection(
-      mode == 'mock' ? const MockSensorLink() : ServerSensorLink(api),
+      mode == 'mock' ? const MockSensorLink() : ServerSensorLink(session),
     );
   }
 

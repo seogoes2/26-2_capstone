@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'app_routes.dart';
 import 'services/alerts.dart';
-import 'services/api_client.dart';
 import 'services/app_storage.dart';
+import 'services/backend_session.dart';
 import 'services/metrics_source.dart';
 import 'services/sensor_connection.dart';
 import 'services/server_metrics_source.dart';
@@ -11,13 +11,13 @@ import 'services/server_metrics_source.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final storage = await AppStorage.load();
-  final api = ApiClient(token: () => storage.apiToken);
-  final connection = SensorConnection.fromEnvironment(api)..start();
+  final backend = BackendSession(storage);
+  final connection = SensorConnection.fromEnvironment(backend)..start();
   final alerts = AlertCenter(storage);
   if (const String.fromEnvironment('SENSOR_MODE') == 'mock') {
     await alerts.addSamplesIfEmpty(DateTime.now());
   }
-  final metrics = ServerMetricsSource(api);
+  final metrics = ServerMetricsSource(backend);
   runApp(
     GupsinApp(
       storage: storage,
