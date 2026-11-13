@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "굽신 (서버 연동)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json"
+      ],
+      "deviceId": "00008150-001074143A61401C"
+    },
+    {
+      "name": "굽신 (서버 연동, release)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "flutterMode": "release",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json"
+      ],
+      "deviceId": "00008150-001074143A61401C"
+    },
+    {
+      "name": "굽신 (서버 없이 목업)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "toolArgs": [
+        "--dart-define=SENSOR_MODE=mock"
+      ],
+      "deviceId": "00008150-001074143A61401C"
+    }
+  ]
+}
