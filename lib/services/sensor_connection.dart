@@ -63,11 +63,12 @@ class ServerSensorLink implements SensorLink {
   final BackendSession _session;
   final Connectivity _connectivity;
 
-  // The demo server runs on a laptop in the same Wi-Fi, so the phone needs
-  // Wi-Fi (not just mobile data) to reach it.
+  // The demo server runs on a laptop that is either on the same Wi-Fi or on
+  // this phone's own hotspot. A phone sharing its hotspot reports mobile data,
+  // not Wi-Fi, yet still reaches the laptop, so any network counts here and
+  // [fetchStatus] decides whether the server actually answers.
   static bool _hasWifi(List<ConnectivityResult> results) =>
-      results.contains(ConnectivityResult.wifi) ||
-      results.contains(ConnectivityResult.ethernet);
+      results.any((r) => r != ConnectivityResult.none);
 
   @override
   Future<bool> isOnWifi() async =>

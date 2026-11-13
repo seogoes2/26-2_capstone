@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/journal_entry.dart';
 import '../models/today_metrics.dart';
 import '../services/app_storage.dart';
+import '../services/auto_refresh.dart';
 import '../services/metrics_source.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_button.dart';
@@ -16,10 +17,14 @@ class HomeScreen extends StatefulWidget {
     required this.storage,
     this.source = const EmptyMetricsSource(),
     this.now = DateTime.now,
+    this.autoRefresh = false,
   });
 
   final AppStorage storage;
   final MetricsSource source;
+
+  /// Reload from the server every few seconds (while this tab is showing).
+  final bool autoRefresh;
 
   final DateTime Function() now;
 
@@ -27,7 +32,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   late final DateTime _today;
   TodayMetrics _metrics = TodayMetrics.empty;
   Mood? _mood;
@@ -65,6 +70,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _memo.text = saved.memo;
     _load();
   }
+
+  @override
+  bool get autoRefreshActive => widget.autoRefresh;
+
+  @override
+  Future<void> onAutoRefresh() => _load();
 
   Future<void> _load() async {
     try {

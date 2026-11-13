@@ -5,6 +5,7 @@ import '../models/monthly.dart';
 import '../models/today_metrics.dart';
 import '../models/weekly.dart';
 import '../services/app_storage.dart';
+import '../services/auto_refresh.dart';
 import '../services/metrics_source.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_toast.dart';
@@ -31,9 +32,13 @@ class ReportScreen extends StatefulWidget {
     this.romLimit = 45,
     this.now = DateTime.now,
     this.storage,
+    this.autoRefresh = false,
   });
 
   final MetricsSource source;
+
+  /// Reload from the server every few seconds (while this tab is showing).
+  final bool autoRefresh;
   final int romLimit;
   final DateTime Function() now;
 
@@ -44,7 +49,8 @@ class ReportScreen extends StatefulWidget {
   State<ReportScreen> createState() => _ReportScreenState();
 }
 
-class _ReportScreenState extends State<ReportScreen> {
+class _ReportScreenState extends State<ReportScreen>
+    with AutoRefresh<ReportScreen> {
   ReportPeriod _period = ReportPeriod.day;
   TodayMetrics _today = TodayMetrics.empty;
   WeeklyMetrics _week = WeeklyMetrics.empty;
@@ -75,6 +81,17 @@ class _ReportScreenState extends State<ReportScreen> {
     } catch (e) {
       debugPrint('리포트 데이터를 불러오지 못했어요: $e');
     }
+  }
+
+  @override
+  bool get autoRefreshActive => widget.autoRefresh;
+
+  /// The monthly view reloads itself when [_generation] changes, so bump it
+  /// only while that view is showing.
+  @override
+  Future<void> onAutoRefresh() {
+    if (_period == ReportPeriod.month) setState(() => _generation++);
+    return _load();
   }
 
   Future<void> _refresh() {

@@ -47,12 +47,17 @@ class _MainShellState extends State<MainShell> {
             child: IndexedStack(
               index: _tab.index,
               children: [
-                HomeScreen(storage: widget.storage, source: widget.metrics),
+                HomeScreen(
+                  storage: widget.storage,
+                  source: widget.metrics,
+                  autoRefresh: _tab == HomeTab.home,
+                ),
                 ConnectionScreen(connection: widget.connection),
                 ReportScreen(
                   romLimit: widget.storage.settings.romLimit,
                   storage: widget.storage,
                   source: widget.metrics,
+                  autoRefresh: _tab == HomeTab.report,
                 ),
                 AlertsScreen(center: widget.alerts),
                 SettingsScreen(
