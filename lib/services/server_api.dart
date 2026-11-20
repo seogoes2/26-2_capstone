@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../models/monthly.dart';
 import '../models/today_metrics.dart';
 import 'sensor_connection.dart';
@@ -18,6 +20,12 @@ abstract final class ServerApi {
   /// Today only: live angle, wear goal, change in overflexion from yesterday.
   /// Query: device_id
   static const overview = '/dashboard/overview';
+
+  /// Latest sensor reading. Query: device_id
+  static const realtime = '/dashboard/realtime';
+
+  static String liveReadings(String deviceId) =>
+      '/ws/devices/${Uri.encodeComponent(deviceId)}/readings';
 
   /// One day's totals. Query: device_id, target_date=YYYY-MM-DD
   static const daily = '/dashboard/daily';
@@ -66,6 +74,20 @@ abstract final class ServerApi {
     return null;
   }
 
+  static int? jointAngle(Object? json) => _int(_map(json)['angle']);
+
+  static int? streamedJointAngle(Object? message) {
+    if (message is! String) return null;
+    try {
+      final json = _map(jsonDecode(message));
+      return jointAngle(json) ??
+          jointAngle(json['reading']) ??
+          jointAngle(json['data']);
+    } on FormatException {
+      return null;
+    }
+  }
+
   /// `/dashboard/daily` (+ hourly, + overview for today) → [TodayMetrics].
   static TodayMetrics today(
     Object? daily, {
@@ -75,12 +97,11 @@ abstract final class ServerApi {
   }) {
     final d = _map(daily);
     final o = _map(overview);
-    final realtime = _map(o['realtime']);
     final today = _map(o['today']);
     final overflex = _int(d['overflexion_count']) ?? 0;
     final goal = _int(today['target_wear_minutes']);
     return TodayMetrics(
-      jointAngle: _int(realtime['angle']),
+      jointAngle: jointAngle(o['realtime']),
       wearTime: _minutes(d['wear_minutes']),
       wearGoal: goal == null || goal <= 0
           ? defaultWearGoal

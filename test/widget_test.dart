@@ -30,6 +30,13 @@ import 'package:gupsin/widgets/home/journal_cards.dart';
 
 import 'fixtures.dart';
 
+class LiveAngleFixture extends FixtureMetricsSource implements LiveAngleSource {
+  final angles = StreamController<int>.broadcast();
+
+  @override
+  Stream<int> watchLiveAngle() => angles.stream;
+}
+
 class FakeSensorLink implements SensorLink {
   bool wifiOn = true;
   SensorStatus? status = MockSensorLink.sample;
@@ -261,6 +268,36 @@ void main() {
       expect(find.text('목표 4시간의 65%'), findsOneWidget);
       expect(find.text('7회'), findsOneWidget);
       expect(find.text('어제보다 2회 감소'), findsOneWidget);
+    });
+
+    testWidgets('홈에서만 실시간 각도를 구독하고 표시한다', (tester) async {
+      await storage.markOnboardingDone();
+      final source = LiveAngleFixture();
+      addTearDown(source.angles.close);
+      await openApp(tester, metrics: source);
+      expect(source.angles.hasListener, isTrue);
+
+      source.angles.add(72);
+      await tester.pump();
+      expect(find.text('72°'), findsOneWidget);
+      expect(find.text('2시간 36분'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('72°'), findsOneWidget);
+
+      await tester.tap(find.text('통신'));
+      await tester.pump();
+      expect(source.angles.hasListener, isFalse);
+
+      await tester.tap(find.text('홈'));
+      await tester.pump();
+      expect(source.angles.hasListener, isTrue);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      expect(source.angles.hasListener, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(source.angles.hasListener, isTrue);
     });
 
     testWidgets('손가락 상태는 하나만, 같은 걸 다시 누르면 취소', (tester) async {

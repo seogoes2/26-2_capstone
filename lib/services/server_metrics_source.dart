@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
 import '../models/monthly.dart';
 import '../models/today_metrics.dart';
 import '../models/weekly.dart';
+import 'api_client.dart';
 import 'backend_session.dart';
 import 'metrics_source.dart';
 import 'server_api.dart';
@@ -9,7 +13,7 @@ import 'server_api.dart';
 ///
 /// The server aggregates on every call, so new sensor readings show up the
 /// next time a screen loads or is pulled to refresh.
-class ServerMetricsSource implements MetricsSource {
+class ServerMetricsSource implements LiveAngleSource {
   ServerMetricsSource(this._session, {DateTime Function()? now})
     : _now = now ?? DateTime.now;
 
@@ -17,6 +21,89 @@ class ServerMetricsSource implements MetricsSource {
   final DateTime Function() _now;
 
   DateTime get _today => _dateOnly(_now());
+
+  static const _angleRefreshInterval = Duration(milliseconds: 300);
+  static const _angleRetryInterval = Duration(seconds: 2);
+
+  @override
+  Stream<int> watchLiveAngle() {
+    final updates = StreamController<int>();
+    Timer? nextPoll;
+    Timer? reconnect;
+    WebSocket? liveSocket;
+    var usingSocket = false;
+    var polling = false;
+
+    Future<void> poll() async {
+      if (updates.isClosed || usingSocket || polling) return;
+      polling = true;
+      int? angle;
+      try {
+        final id = await _session.deviceId();
+        if (updates.isClosed || usingSocket) return;
+        final json = await _session.api.get(
+          ServerApi.realtime,
+          query: {'device_id': id},
+        );
+        angle = ServerApi.jointAngle(json);
+      } on ApiException {
+        // Keep the last reading and retry less often.
+      } finally {
+        polling = false;
+      }
+      if (updates.isClosed || usingSocket) return;
+      if (angle != null) updates.add(angle);
+      nextPoll = Timer(
+        angle == null ? _angleRetryInterval : _angleRefreshInterval,
+        poll,
+      );
+    }
+
+    Future<void> connect() async {
+      try {
+        final id = await _session.deviceId();
+        if (updates.isClosed) return;
+        final socket = await _session.api.openWebSocket(
+          ServerApi.liveReadings(id),
+        );
+        if (updates.isClosed) {
+          await socket.close();
+          return;
+        }
+        liveSocket = socket;
+        await for (final message in socket) {
+          final angle = ServerApi.streamedJointAngle(message);
+          if (angle == null || updates.isClosed) continue;
+          usingSocket = true;
+          nextPoll?.cancel();
+          updates.add(angle);
+        }
+      } on Exception {
+        // HTTP updates continue if the socket cannot supply readings.
+      } finally {
+        liveSocket = null;
+        if (!updates.isClosed) {
+          if (usingSocket) {
+            usingSocket = false;
+            unawaited(poll());
+          }
+          reconnect = Timer(_angleRetryInterval, connect);
+        }
+      }
+    }
+
+    updates.onListen = () {
+      unawaited(poll());
+      unawaited(connect());
+    };
+    updates.onCancel = () {
+      nextPoll?.cancel();
+      reconnect?.cancel();
+      unawaited(liveSocket?.close().then<void>((_) {}));
+      unawaited(updates.close());
+    };
+    return updates.stream;
+  }
 
   @override
   Future<TodayMetrics> today(DateTime day) async {

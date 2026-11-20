@@ -20,7 +20,7 @@
       "toolArgs": [
         "--dart-define-from-file=dart_defines.json"
       ],
-      "deviceId": "00008150-001074143A61401C"
+      "deviceId": "00008110-000A20843E61401E"
     },
     {
       "name": "굽신 (서버 없이 목업)",
