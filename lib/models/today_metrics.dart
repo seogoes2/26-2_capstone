@@ -30,6 +30,18 @@ class TodayMetrics {
 
   final List<int> hourlyOverflex;
 
+  TodayMetrics withJointAngle(int angle) => TodayMetrics(
+    jointAngle: angle,
+    romMin: romMin,
+    romMax: romMax,
+    wearTime: wearTime,
+    wearGoal: wearGoal,
+    overflexCount: overflexCount,
+    overflexChangeFromYesterday: overflexChangeFromYesterday,
+    maxOverAngle: maxOverAngle,
+    hourlyOverflex: hourlyOverflex,
+  );
+
   static const hourlyLabels = ['06', '09', '12', '15', '18', '21'];
 
   bool get isWithinRom =>

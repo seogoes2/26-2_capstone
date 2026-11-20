@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 /// How often screens showing live sensor numbers ask the server again.
-const autoRefreshInterval = Duration(seconds: 3);
+const autoRefreshInterval = Duration(seconds: 2);
 
 /// Calls [onAutoRefresh] every [autoRefreshInterval] while [autoRefreshActive]
 /// is true and the app is in the foreground.
@@ -17,6 +17,11 @@ mixin AutoRefresh<T extends StatefulWidget> on State<T> {
 
   /// Reloads the screen's data. Errors should be handled inside.
   Future<void> onAutoRefresh();
+
+  bool get isAutoRefreshing => _autoRefreshTimer != null;
+
+  /// Lets a screen start or stop its live data along with its regular refresh.
+  void onAutoRefreshActivityChanged(bool active) {}
 
   Timer? _autoRefreshTimer;
   AppLifecycleListener? _lifecycle;
@@ -54,10 +59,12 @@ mixin AutoRefresh<T extends StatefulWidget> on State<T> {
     final running = _autoRefreshTimer != null;
     if (shouldRun && !running) {
       _autoRefreshTimer = Timer.periodic(autoRefreshInterval, (_) => _tick());
+      onAutoRefreshActivityChanged(true);
       if (refreshNow) _tick();
     } else if (!shouldRun && running) {
       _autoRefreshTimer!.cancel();
       _autoRefreshTimer = null;
+      onAutoRefreshActivityChanged(false);
     }
   }
 

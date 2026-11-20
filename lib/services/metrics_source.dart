@@ -19,6 +19,11 @@ abstract interface class MetricsSource {
   Future<MonthlyMetrics> month(int year, int month);
 }
 
+/// A metrics source that can supply live joint angles independently of totals.
+abstract interface class LiveAngleSource implements MetricsSource {
+  Stream<int> watchLiveAngle();
+}
+
 /// Used until a real source is connected: every screen shows its empty state.
 class EmptyMetricsSource implements MetricsSource {
   const EmptyMetricsSource();

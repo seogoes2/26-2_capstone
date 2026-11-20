@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -51,6 +52,32 @@ class ApiClient {
   /// Called once when a request comes back 401 (token missing or expired).
   /// Return true after getting a new token to retry the request.
   final Future<bool> Function()? onUnauthorized;
+
+  String? get _accessToken =>
+      _token() ?? (_envToken.isEmpty ? null : _envToken);
+
+  Future<WebSocket> openWebSocket(String path) async {
+    final endpoint = Uri.parse('$baseUrl$path');
+    final uri = endpoint.replace(
+      scheme: endpoint.scheme == 'https' ? 'wss' : 'ws',
+    );
+    final token = _accessToken;
+    final client = HttpClient()..connectionTimeout = timeout;
+    try {
+      final socket = await WebSocket.connect(
+        uri.toString(),
+        headers: {
+          if (token != null && token.isNotEmpty)
+            'Authorization': 'Bearer $token',
+        },
+        customClient: client,
+      ).timeout(timeout);
+      socket.pingInterval = const Duration(seconds: 15);
+      return socket;
+    } finally {
+      client.close(force: true);
+    }
+  }
 
   Future<Object?> get(String path, {Map<String, String>? query}) =>
       _send('GET', path, query: query);
@@ -105,7 +132,7 @@ class ApiClient {
     final request = http.Request(method, uri)
       ..headers['Accept'] = 'application/json';
 
-    final token = _token() ?? (_envToken.isEmpty ? null : _envToken);
+    final token = _accessToken;
     if (token != null && token.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer $token';
     }

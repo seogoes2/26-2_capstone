@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -14,6 +16,8 @@ import 'package:gupsin/services/server_metrics_source.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // These tests use a loopback server for real WebSocket upgrades.
+  HttpOverrides.global = null;
 
   /// A fake backend. [handler] returns the JSON body, or an int to answer
   /// with that bare status code.
@@ -81,12 +85,13 @@ void main() {
     Object? Function(http.Request request) handler, {
     List<http.Request>? log,
     String deviceId = 'GUBSIN-DEMO-001',
+    String baseUrl = 'http://server.test',
     Map<String, Object> prefs = const {'api_access_token': 'test-token'},
   }) async {
     SharedPreferences.setMockInitialValues(prefs);
     return BackendSession(
       await AppStorage.load(),
-      baseUrl: 'http://server.test',
+      baseUrl: baseUrl,
       email: 'demo@gubsin.example',
       password: 'pw',
       deviceId: deviceId,
@@ -193,6 +198,84 @@ void main() {
   });
 
   group('ServerMetricsSource', () {
+    test('소켓에 연결할 수 없으면 최신 각도만 반복 조회한다', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        request.response.statusCode = HttpStatus.notFound;
+        unawaited(request.response.close());
+      });
+      final log = <http.Request>[];
+      var angle = 71.8;
+      final source = ServerMetricsSource(
+        await session(
+          (_) => {'angle': angle},
+          baseUrl: 'http://127.0.0.1:${server.port}',
+          log: log,
+        ),
+      );
+      final readings = StreamIterator(source.watchLiveAngle());
+      addTearDown(readings.cancel);
+
+      expect(await readings.moveNext(), isTrue);
+      expect(readings.current, 72);
+      angle = 75.1;
+      expect(await readings.moveNext(), isTrue);
+      expect(readings.current, 75);
+
+      await readings.cancel();
+      expect(log.map((r) => r.url.path), [
+        '/dashboard/realtime',
+        '/dashboard/realtime',
+      ]);
+      expect(log.first.url.queryParameters, {'device_id': 'GUBSIN-DEMO-001'});
+    });
+
+    test('센서 소켓을 인증하고 수신한 각도를 바로 전달한다', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final request = Completer<HttpRequest>();
+      final connected = Completer<WebSocket>();
+      server.listen((upgrade) async {
+        request.complete(upgrade);
+        final socket = await WebSocketTransformer.upgrade(upgrade);
+        socket.listen((_) {});
+        connected.complete(socket);
+      });
+      final source = ServerMetricsSource(
+        await session(
+          (_) => {'angle': 5},
+          deviceId: 'GUBSIN-001',
+          baseUrl: 'http://127.0.0.1:${server.port}',
+        ),
+      );
+      final readings = StreamIterator(
+        source.watchLiveAngle().where((angle) => angle != 5),
+      );
+      addTearDown(readings.cancel);
+      final first = readings.moveNext();
+      final socket = await connected.future.timeout(const Duration(seconds: 2));
+      addTearDown(socket.close);
+
+      final upgrade = await request.future;
+      expect(upgrade.uri.path, '/ws/devices/GUBSIN-001/readings');
+      expect(upgrade.headers.value('authorization'), 'Bearer test-token');
+      socket.add('connection-ready');
+      socket.add(
+        jsonEncode({
+          'type': 'reading',
+          'data': {'angle': 71.8},
+        }),
+      );
+      expect(await first, isTrue);
+      expect(readings.current, 72);
+
+      socket.add(jsonEncode({'angle': 76.2}));
+      expect(await readings.moveNext(), isTrue);
+      expect(readings.current, 76);
+      await readings.cancel();
+    });
+
     Map<String, Object?> day(
       String date,
       num wear,

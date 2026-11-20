@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/journal_entry.dart';
@@ -35,6 +37,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   late final DateTime _today;
   TodayMetrics _metrics = TodayMetrics.empty;
+  final _liveAngle = ValueNotifier<int?>(null);
+  StreamSubscription<int>? _liveAngleSubscription;
   Mood? _mood;
   final Set<Symptom> _symptoms = {};
   final Set<Activity> _activities = {};
@@ -77,6 +81,29 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
   @override
   Future<void> onAutoRefresh() => _load();
 
+  @override
+  void onAutoRefreshActivityChanged(bool active) {
+    unawaited(_liveAngleSubscription?.cancel());
+    _liveAngleSubscription = null;
+    final source = widget.source;
+    if (active && source is LiveAngleSource) {
+      _liveAngleSubscription = source.watchLiveAngle().listen((angle) {
+        _liveAngle.value = angle;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.source, widget.source)) {
+      _liveAngle.value = null;
+      if (oldWidget.autoRefresh && isAutoRefreshing) {
+        onAutoRefreshActivityChanged(true);
+      }
+    }
+  }
+
   Future<void> _load() async {
     try {
       final metrics = await widget.source.today(_today);
@@ -88,6 +115,8 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
 
   @override
   void dispose() {
+    unawaited(_liveAngleSubscription?.cancel());
+    _liveAngle.dispose();
     _memo.dispose();
     super.dispose();
   }
@@ -151,7 +180,12 @@ class _HomeScreenState extends State<HomeScreen> with AutoRefresh<HomeScreen> {
                   style: pretendard(13, FontWeight.w400, AppColors.textSub),
                 ),
                 const SizedBox(height: 25),
-                CurrentAngleCard(metrics: m),
+                ValueListenableBuilder<int?>(
+                  valueListenable: _liveAngle,
+                  builder: (context, angle, child) => CurrentAngleCard(
+                    metrics: angle == null ? m : m.withJointAngle(angle),
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Row(
                   children: [
