@@ -151,11 +151,17 @@ class ServerMetricsSource implements LiveAngleSource {
       ),
     ).wait;
 
-    final thisDays = ServerApi.days(thisJson);
+    final thisDays = ServerApi.days(
+      thisJson,
+      startingAt: ServerApi.demo ? start : null,
+    );
     final thisWeek = [
       for (var d = start; !d.isAfter(end); d = _addDays(d, 1)) thisDays[d],
     ];
-    final lastWeek = ServerApi.days(lastJson).values
+    final lastWeek = ServerApi.days(
+      lastJson,
+      startingAt: ServerApi.demo ? _addDays(start, -7) : null,
+    ).values
         .where((r) => r.hasRecord)
         .toList();
 
@@ -199,6 +205,7 @@ class ServerMetricsSource implements LiveAngleSource {
       days: {
         for (final MapEntry(key: date, value: r) in ServerApi.days(
           json,
+          startingAt: ServerApi.demo ? DateTime(year, month) : null,
         ).entries)
           if (date.year == year && date.month == month) date.day: r,
       },

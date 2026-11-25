@@ -54,13 +54,24 @@ abstract final class ServerApi {
     'target_date': date(day),
   };
 
+  /// `--dart-define=API_DEMO=true`: weekly/monthly ask the server for its
+  /// fixed presentation data (`demo=true`, see the backend's
+  /// demo_statistics.py) instead of real DB records.
+  static const demo = bool.fromEnvironment('API_DEMO');
+
   static Map<String, String> weekQuery(String deviceId, DateTime end) => {
     'device_id': deviceId,
     'end_date': date(end),
+    if (demo) 'demo': 'true',
   };
 
   static Map<String, String> monthQuery(String deviceId, int year, int month) =>
-      {'device_id': deviceId, 'year': '$year', 'month': '$month'};
+      {
+        'device_id': deviceId,
+        'year': '$year',
+        'month': '$month',
+        if (demo) 'demo': 'true',
+      };
 
   // ── Responses ────────────────────────────────────────────────────────────
 
@@ -141,15 +152,31 @@ abstract final class ServerApi {
   }
 
   /// `/dashboard/weekly` or `/dashboard/monthly` → day records by date.
-  static Map<DateTime, DayRecord> days(Object? json) => {
-    for (final item in _list(_map(json)['daily']).map(_map))
-      // Entries without a readable date are skipped.
-      ?_date(item['date']): DayRecord(
-        wear: _minutes(item['wear_minutes']),
-        overflexCount: _int(item['overflexion_count']) ?? 0,
-        maxOverAngle: _excess(item['max_excess_angle']),
-      ),
-  };
+  ///
+  /// [startingAt] moves the records so the first one falls on that day,
+  /// keeping their order. Demo responses carry fixed dates (June 2026), so
+  /// this lays them over the week or month being shown.
+  static Map<DateTime, DayRecord> days(Object? json, {DateTime? startingAt}) {
+    final items = _list(_map(json)['daily']).map(_map).toList();
+    final first = items.isEmpty ? null : _date(items.first['date']);
+    final shift = startingAt == null || first == null
+        ? 0
+        : DateTime.utc(startingAt.year, startingAt.month, startingAt.day)
+              .difference(DateTime.utc(first.year, first.month, first.day))
+              .inDays;
+    return {
+      for (final item in items)
+        // Entries without a readable date are skipped.
+        ?_shifted(_date(item['date']), shift): DayRecord(
+          wear: _minutes(item['wear_minutes']),
+          overflexCount: _int(item['overflexion_count']) ?? 0,
+          maxOverAngle: _excess(item['max_excess_angle']),
+        ),
+    };
+  }
+
+  static DateTime? _shifted(DateTime? d, int days) =>
+      d == null ? null : DateTime(d.year, d.month, d.day + days);
 
   /// Daily wear goal from a weekly/monthly response.
   static Duration wearGoal(Object? json) {
